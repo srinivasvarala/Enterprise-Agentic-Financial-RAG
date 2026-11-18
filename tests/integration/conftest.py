@@ -5,6 +5,7 @@ from uuid import uuid4
 
 import pytest
 from fastapi.testclient import TestClient
+from qdrant_client import QdrantClient
 from sqlalchemy import create_engine, text
 from sqlalchemy.engine import make_url
 
@@ -30,6 +31,11 @@ def settings() -> Iterator[Settings]:
         database_url=test_url.render_as_string(hide_password=False),  # type: ignore[arg-type]
         s3_bucket=f"finrag-test-{suffix}",
         max_upload_bytes=64 * 1024,
+        # real Qdrant, fake models: no Voyage key and no BM25 model download needed
+        vector_store_backend="qdrant",
+        embedder_backend="hash",
+        sparse_backend="hash",
+        qdrant_collection=f"finrag_test_{suffix}",
     )
     engine = create_engine(test_url)
     with engine.connect() as conn:
@@ -37,6 +43,7 @@ def settings() -> Iterator[Settings]:
         conn.commit()
     engine.dispose()
     yield test_settings
+    QdrantClient(url=test_settings.qdrant_url).delete_collection(test_settings.qdrant_collection)
     with admin.connect() as conn:
         conn.execute(text(f'DROP DATABASE IF EXISTS "{db_name}" WITH (FORCE)'))
     admin.dispose()

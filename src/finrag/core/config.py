@@ -2,6 +2,7 @@
 
 from enum import StrEnum
 from functools import lru_cache
+from typing import Literal
 from uuid import UUID
 
 from pydantic import SecretStr
@@ -30,6 +31,26 @@ class Settings(BaseSettings):
 
     # Qdrant: hybrid search index (ADR-0001)
     qdrant_url: str = "http://localhost:6333"
+    qdrant_collection: str = "finrag_chunks"
+    qdrant_timeout_seconds: float = 30.0
+
+    # Which adapters the composition root wires. Real ones by default; tests pick fakes so they
+    # need no API key and no model download (see .env.example).
+    vector_store_backend: Literal["qdrant", "memory"] = "qdrant"
+    embedder_backend: Literal["voyage", "hash"] = "voyage"
+    sparse_backend: Literal["fastembed", "hash"] = "fastembed"
+
+    # Voyage dense embeddings (ADR-0005). The model is a finance-tuned default, swappable by config.
+    voyage_api_key: SecretStr = SecretStr("")
+    voyage_model: str = "voyage-finance-2"
+    voyage_dimension: int = 1024  # output size of voyage_model; the Qdrant dense vector uses it
+    voyage_base_url: str = "https://api.voyageai.com/v1"
+    voyage_batch_size: int = 64
+    voyage_timeout_seconds: float = 60.0
+
+    # FastEmbed BM25 sparse encoder (model files download on first use)
+    fastembed_bm25_model: str = "Qdrant/bm25"
+    fastembed_cache_dir: str | None = None
 
     # S3-compatible blob storage (SeaweedFS locally, AWS S3 in cloud)
     s3_endpoint_url: str = "http://localhost:8333"

@@ -50,12 +50,37 @@ def build_parsers() -> Mapping[str, Parser]:
     return {"text/plain": TextParser()}  # PDF parser arrives with the Docling ticket
 
 
-def build_indexing_adapters() -> tuple[Embedder, SparseEncoder, VectorStore]:
-    """The one place to swap in the Voyage / FastEmbed BM25 / Qdrant adapters (ticket #4)."""
+def build_indexing_adapters(settings: Settings) -> tuple[Embedder, SparseEncoder, VectorStore]:
+    """Wire the Embedder, SparseEncoder and VectorStore chosen by Settings (ADR-0001, ADR-0005)."""
     from finrag.indexing.in_memory import HashEmbedder, HashSparseEncoder, InMemoryVectorStore
 
-    log.warning("using in-memory index adapters: indexed points are not persisted")
-    return HashEmbedder(), HashSparseEncoder(), InMemoryVectorStore()
+    embedder: Embedder
+    if settings.embedder_backend == "voyage":
+        from finrag.indexing.voyage import VoyageEmbedder
+
+        embedder = VoyageEmbedder.from_settings(settings)
+    else:
+        embedder = HashEmbedder()
+
+    sparse: SparseEncoder
+    if settings.sparse_backend == "fastembed":
+        from finrag.indexing.bm25 import FastEmbedBm25Encoder
+
+        sparse = FastEmbedBm25Encoder.from_settings(settings)
+    else:
+        sparse = HashSparseEncoder()
+
+    store: VectorStore
+    if settings.vector_store_backend == "qdrant":
+        from finrag.indexing.qdrant_store import QdrantVectorStore
+
+        store = QdrantVectorStore.from_url(
+            settings.qdrant_url, settings.qdrant_collection, settings.qdrant_timeout_seconds
+        )
+    else:
+        log.warning("using the in-memory vector store: indexed points are not persisted")
+        store = InMemoryVectorStore()
+    return embedder, sparse, store
 
 
 def build_container(settings: Settings) -> Container:
@@ -81,7 +106,7 @@ def _build(settings: Settings, job_queue: JobQueue) -> Container:
 
     blob_store = S3BlobStore.from_settings(settings)
     blob_store.ensure_bucket()
-    embedder, sparse_encoder, vector_store = build_indexing_adapters()
+    embedder, sparse_encoder, vector_store = build_indexing_adapters(settings)
     return Container(
         settings=settings,
         session_factory=build_session_factory(build_engine(settings)),
