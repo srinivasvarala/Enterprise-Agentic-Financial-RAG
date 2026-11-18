@@ -29,7 +29,7 @@ def settings() -> Iterator[Settings]:
         env=Environment.TEST,
         database_url=test_url.render_as_string(hide_password=False),  # type: ignore[arg-type]
         s3_bucket=f"finrag-test-{suffix}",
-        max_upload_bytes=1024,
+        max_upload_bytes=64 * 1024,
     )
     engine = create_engine(test_url)
     with engine.connect() as conn:

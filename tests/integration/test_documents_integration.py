@@ -2,7 +2,7 @@
 
 import hashlib
 import os
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 import pytest
 from alembic.autogenerate import compare_metadata
@@ -12,7 +12,8 @@ from sqlalchemy import select, text
 
 from finrag.core.config import Settings
 from finrag.core.container import Container
-from finrag.storage.models import Base, Collection, Tenant
+from finrag.core.domain import IngestionJob
+from finrag.storage.models import Base, Collection, DocumentVersion, Tenant
 
 pytestmark = pytest.mark.integration
 
@@ -113,6 +114,54 @@ def test_documents_carry_tenant_and_collection_ids(
 
 def test_unknown_document_is_404(client: TestClient) -> None:
     assert client.get(f"/documents/{uuid4()}").status_code == 404
+
+
+def run_ingestion(container: Container, doc_id: str) -> IngestionJob:
+    """Run the ingestion job synchronously against real Postgres and S3."""
+    with container.session_factory() as session:
+        version = session.scalars(
+            select(DocumentVersion).where(DocumentVersion.document_id == UUID(doc_id))
+        ).one()
+    job = IngestionJob(version.tenant_id, version.document_id, version.id)
+    container.ingestion_pipeline().run(job, job_id="integration")
+    return job
+
+
+def test_text_document_is_ingested_to_ready_on_real_postgres_and_s3(
+    client: TestClient, container: Container
+) -> None:
+    body = "\n\n".join(f"Paragraph {i} {uuid4()} " + "word " * 400 for i in range(4))
+    doc_id = upload(client, body.encode()).json()["id"]
+
+    job = run_ingestion(container, doc_id)
+
+    document = client.get(f"/documents/{doc_id}").json()
+    page = client.get(f"/documents/{doc_id}/chunks", params={"limit": 2}).json()
+    assert document["status"] == "ready"
+    assert document["chunk_count"] == page["total"] > 2
+    assert [c["ordinal"] for c in page["items"]] == [0, 1]
+    store = container.vector_store
+    assert len(store.get_version_points(job.tenant_id, job.document_version_id)) == page["total"]
+
+    run_ingestion(container, doc_id)  # re-run: replaces, never duplicates
+    assert client.get(f"/documents/{doc_id}/chunks").json()["total"] == page["total"]
+    assert len(store.get_version_points(job.tenant_id, job.document_version_id)) == page["total"]
+
+
+def test_corrupt_text_fails_with_a_reason_on_real_postgres(
+    client: TestClient, container: Container
+) -> None:
+    doc_id = upload(client, b"\xff\xfe\x00" + uuid4().bytes).json()["id"]
+
+    run_ingestion(container, doc_id)
+
+    document = client.get(f"/documents/{doc_id}").json()
+    assert document["status"] == "failed"
+    assert document["failure_reason"]
+
+
+def test_chunks_of_an_unknown_document_are_404(client: TestClient) -> None:
+    assert client.get(f"/documents/{uuid4()}/chunks").status_code == 404
 
 
 def test_validation_errors(client: TestClient, settings: Settings) -> None:

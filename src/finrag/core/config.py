@@ -44,6 +44,12 @@ class Settings(BaseSettings):
     # Uploads
     max_upload_bytes: int = 50 * 1024 * 1024
 
+    # Chunking and ingestion
+    chunk_max_tokens: int = 800
+    embedding_batch_size: int = 64
+    ingest_max_attempts: int = 3  # per stage, for transient provider errors
+    ingest_retry_base_seconds: float = 2.0  # exponential backoff: base * 2**(attempt - 1)
+
     # OpenTelemetry (Phoenix locally)
     otel_exporter_endpoint: str = "http://localhost:6006/v1/traces"
 

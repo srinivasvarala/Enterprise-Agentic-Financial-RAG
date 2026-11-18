@@ -3,10 +3,11 @@
 from typing import Annotated
 from uuid import UUID
 
-from fastapi import APIRouter, File, HTTPException, Response, UploadFile
+from fastapi import APIRouter, File, HTTPException, Query, Response, UploadFile
 
 from finrag.api.deps import DocumentServiceDep, PrincipalDep
 from finrag.ingestion.service import (
+    ChunkPage,
     DocumentView,
     EmptyFileError,
     FileTooLargeError,
@@ -53,3 +54,17 @@ def get_document(
     if document is None:
         raise HTTPException(404, "Document not found.")
     return document
+
+
+@router.get("/{document_id}/chunks", response_model=ChunkPage)
+def list_chunks(
+    document_id: UUID,
+    principal: PrincipalDep,
+    service: DocumentServiceDep,
+    limit: Annotated[int, Query(ge=1, le=200)] = 50,
+    offset: Annotated[int, Query(ge=0)] = 0,
+) -> ChunkPage:
+    page = service.list_chunks(principal, document_id, limit, offset)
+    if page is None:
+        raise HTTPException(404, "Document not found.")
+    return page
