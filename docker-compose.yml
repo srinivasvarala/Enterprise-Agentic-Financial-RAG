@@ -1,0 +1,46 @@
+# Local development stack. App services (api, worker) are added in M1.
+name: finrag
+
+services:
+  postgres:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_USER: finrag
+      POSTGRES_PASSWORD: finrag
+      POSTGRES_DB: finrag
+    ports: ["5432:5432"]
+    volumes: [postgres-data:/var/lib/postgresql/data]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U finrag -d finrag"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  qdrant:
+    image: qdrant/qdrant:v1.15.4
+    ports: ["6333:6333", "6334:6334"]
+    volumes: [qdrant-data:/qdrant/storage]
+
+  # S3-compatible blob store (ADR-0007). MinIO no longer publishes community images.
+  seaweedfs:
+    image: chrislusf/seaweedfs:3.97
+    command: server -dir=/data -s3 -s3.port=8333 -s3.config=/etc/seaweedfs/s3.json
+    ports: ["8333:8333"]
+    volumes:
+      - seaweedfs-data:/data
+      - ./infra/seaweedfs/s3.json:/etc/seaweedfs/s3.json:ro
+
+  phoenix:
+    image: arizephoenix/phoenix:version-11.0.0
+    ports:
+      - "6006:6006" # UI + OTLP/HTTP (/v1/traces)
+      - "4317:4317" # OTLP/gRPC
+    volumes: [phoenix-data:/mnt/data]
+    environment:
+      PHOENIX_WORKING_DIR: /mnt/data
+
+volumes:
+  postgres-data:
+  qdrant-data:
+  seaweedfs-data:
+  phoenix-data:

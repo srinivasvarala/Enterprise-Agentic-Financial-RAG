@@ -1,0 +1,11 @@
+{
+  "identities": [
+    {
+      "name": "finrag-local",
+      "credentials": [
+        { "accessKey": "finrag", "secretKey": "finrag-secret" }
+      ],
+      "actions": ["Admin", "Read", "List", "Tagging", "Write"]
+    }
+  ]
+}
