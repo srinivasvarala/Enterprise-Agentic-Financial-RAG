@@ -27,7 +27,7 @@ def build_app(
     app = procrastinate.App(
         connector=connector or SyncPsycopgConnector(conninfo=psycopg_dsn(settings))
     )
-    provider = pipeline_provider or _lazy_pipeline(settings)
+    provider = pipeline_provider or lazy_pipeline(settings)
 
     @app.task(name=INGEST_TASK, pass_context=True)
     def ingest_document_version(
@@ -45,7 +45,7 @@ def build_app(
     return app
 
 
-def _lazy_pipeline(settings: Settings) -> Callable[[], IngestionPipeline]:
+def lazy_pipeline(settings: Settings) -> Callable[[], IngestionPipeline]:
     """Builds the worker's pipeline on first use and reuses it."""
     cache: list[IngestionPipeline] = []
 
