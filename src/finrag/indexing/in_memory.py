@@ -10,7 +10,7 @@ import math
 from collections.abc import Sequence
 from uuid import UUID
 
-from finrag.core.domain import SparseVector, VectorPoint
+from finrag.core.domain import SearchHit, SparseVector, VectorPoint
 from finrag.core.tenancy import require_points_of_tenant, require_tenant
 
 
@@ -35,6 +35,9 @@ class HashEmbedder:
     def embed_documents(self, texts: Sequence[str]) -> list[tuple[float, ...]]:
         return [self._embed(t) for t in texts]
 
+    def embed_query(self, text: str) -> tuple[float, ...]:
+        return self._embed(text)
+
     def _embed(self, text: str) -> tuple[float, ...]:
         vector = [0.0] * self._dimension
         for token in _tokens(text):
@@ -47,15 +50,18 @@ class HashSparseEncoder:
     """Term-frequency sparse vectors over hashed vocabulary indices."""
 
     def encode_documents(self, texts: Sequence[str]) -> list[SparseVector]:
-        out: list[SparseVector] = []
-        for text in texts:
-            counts: dict[int, float] = {}
-            for token in _tokens(text):
-                idx = _bucket(token, 2**20)
-                counts[idx] = counts.get(idx, 0.0) + 1.0
-            ordered = sorted(counts)
-            out.append(SparseVector(tuple(ordered), tuple(counts[i] for i in ordered)))
-        return out
+        return [self._encode(text) for text in texts]
+
+    def encode_query(self, text: str) -> SparseVector:
+        return self._encode(text)
+
+    def _encode(self, text: str) -> SparseVector:
+        counts: dict[int, float] = {}
+        for token in _tokens(text):
+            idx = _bucket(token, 2**20)
+            counts[idx] = counts.get(idx, 0.0) + 1.0
+        ordered = sorted(counts)
+        return SparseVector(tuple(ordered), tuple(counts[i] for i in ordered))
 
 
 class InMemoryVectorStore:
@@ -90,3 +96,42 @@ class InMemoryVectorStore:
             for (t, _), p in self._points.items()
             if t == tenant_id and p.document_version_id == document_version_id
         ]
+
+    def search(
+        self,
+        tenant_id: UUID,
+        collection_id: UUID,
+        dense: tuple[float, ...],
+        sparse: SparseVector,
+        *,
+        dense_k: int,
+        sparse_k: int,
+        rrf_k: int,
+        limit: int,
+    ) -> list[SearchHit]:
+        """Mimics the Qdrant adapter: two ranked branches fused by reciprocal rank fusion."""
+        require_tenant(tenant_id)
+        scope = [
+            p
+            for (t, _), p in self._points.items()
+            if t == tenant_id and p.collection_id == collection_id
+        ]
+        query_terms = dict(zip(sparse.indices, sparse.values, strict=True))
+        by_dense = sorted(
+            scope, key=lambda p: -sum(a * b for a, b in zip(dense, p.dense, strict=True))
+        )
+        by_sparse = sorted(
+            (p for p in scope if set(p.sparse.indices) & set(query_terms)),
+            key=lambda p: (
+                -sum(
+                    query_terms.get(i, 0.0) * v
+                    for i, v in zip(p.sparse.indices, p.sparse.values, strict=True)
+                )
+            ),
+        )
+        fused: dict[UUID, float] = {}
+        for branch in (by_dense[:dense_k], by_sparse[:sparse_k]):
+            for rank, point in enumerate(branch, start=1):
+                fused[point.chunk_id] = fused.get(point.chunk_id, 0.0) + 1.0 / (rrf_k + rank)
+        ranked = sorted(fused.items(), key=lambda item: -item[1])
+        return [SearchHit(chunk_id, score) for chunk_id, score in ranked[:limit]]

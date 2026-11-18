@@ -35,6 +35,7 @@ def settings() -> Iterator[Settings]:
         vector_store_backend="qdrant",
         embedder_backend="hash",
         sparse_backend="hash",
+        reranker_backend="overlap",
         qdrant_collection=f"finrag_test_{suffix}",
     )
     engine = create_engine(test_url)

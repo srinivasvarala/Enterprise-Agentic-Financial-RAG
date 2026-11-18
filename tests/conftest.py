@@ -13,6 +13,8 @@ from finrag.core.config import Environment, Settings
 from finrag.core.container import Container
 from finrag.indexing.in_memory import HashSparseEncoder
 from finrag.ingestion.text_parser import TextParser
+from finrag.retrieval.rerankers import OverlapReranker
+from finrag.storage.chunk_repository import SqlChunkRepository
 from finrag.storage.models import Base
 from finrag.storage.seed import seed_defaults
 
@@ -39,6 +41,8 @@ def env() -> Iterator[Env]:
         embedder=embedder,
         sparse_encoder=HashSparseEncoder(),
         vector_store=vectors,
+        chunk_repository=SqlChunkRepository(session_factory),
+        reranker=OverlapReranker(),
     )
     app = create_app(settings, container=container)
     yield Env(

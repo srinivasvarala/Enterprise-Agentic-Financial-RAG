@@ -109,6 +109,14 @@ class ParsedDocument:
     blocks: tuple[Block, ...]
 
 
+@dataclass(frozen=True, slots=True)
+class SearchHit:
+    """One fused search result: a Chunk id and its fusion score (higher is better)."""
+
+    chunk_id: UUID
+    score: float
+
+
 # -- Answering: generator output, retrieved Evidence and the validated Answer (ADR-0008) ----------
 
 

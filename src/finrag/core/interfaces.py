@@ -4,7 +4,14 @@ from collections.abc import Sequence
 from typing import Protocol
 from uuid import UUID
 
-from finrag.core.domain import IngestionJob, ParsedDocument, SparseVector, VectorPoint
+from finrag.core.domain import (
+    EvidenceChunk,
+    IngestionJob,
+    ParsedDocument,
+    SearchHit,
+    SparseVector,
+    VectorPoint,
+)
 
 
 class BlobStore(Protocol):
@@ -40,11 +47,17 @@ class Embedder(Protocol):
 
     def embed_documents(self, texts: Sequence[str]) -> list[tuple[float, ...]]: ...
 
+    def embed_query(self, text: str) -> tuple[float, ...]:
+        """Embed a question; providers treat queries differently from documents."""
+        ...
+
 
 class SparseEncoder(Protocol):
     """BM25 sparse vectors for documents."""
 
     def encode_documents(self, texts: Sequence[str]) -> list[SparseVector]: ...
+
+    def encode_query(self, text: str) -> SparseVector: ...
 
 
 class VectorStore(Protocol):
@@ -65,3 +78,35 @@ class VectorStore(Protocol):
 
     def get_version_points(self, tenant_id: UUID, document_version_id: UUID) -> list[VectorPoint]:
         """All points of one Document Version, in no particular order."""
+
+    def search(
+        self,
+        tenant_id: UUID,
+        collection_id: UUID,
+        dense: tuple[float, ...],
+        sparse: SparseVector,
+        *,
+        dense_k: int,
+        sparse_k: int,
+        rrf_k: int,
+        limit: int,
+    ) -> list[SearchHit]:
+        """Dense and BM25 candidates fused by reciprocal rank fusion, best first.
+
+        Only points of this Tenant and Collection are searched.
+        """
+        ...
+
+
+class ChunkRepository(Protocol):
+    """Loads Chunks from the system of record. Ids that no longer exist are simply absent."""
+
+    def get_many(
+        self, tenant_id: UUID, collection_id: UUID, chunk_ids: Sequence[UUID]
+    ) -> list[EvidenceChunk]: ...
+
+
+class Reranker(Protocol):
+    """Scores each chunk 0 to 1 for how well it answers the question, in input order."""
+
+    def score(self, question: str, chunks: Sequence[EvidenceChunk]) -> list[float]: ...
