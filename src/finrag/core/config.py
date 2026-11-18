@@ -2,6 +2,7 @@
 
 from enum import StrEnum
 from functools import lru_cache
+from uuid import UUID
 
 from pydantic import SecretStr
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -35,6 +36,13 @@ class Settings(BaseSettings):
     s3_bucket: str = "finrag-documents"
     s3_access_key: SecretStr = SecretStr("finrag")
     s3_secret_key: SecretStr = SecretStr("finrag-secret")
+
+    # Seeded default Tenant and Collection every request resolves to until M6 (API-key auth)
+    default_tenant_id: UUID = UUID("00000000-0000-4000-8000-000000000001")
+    default_collection_id: UUID = UUID("00000000-0000-4000-8000-000000000002")
+
+    # Uploads
+    max_upload_bytes: int = 50 * 1024 * 1024
 
     # OpenTelemetry (Phoenix locally)
     otel_exporter_endpoint: str = "http://localhost:6006/v1/traces"
