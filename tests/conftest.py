@@ -11,6 +11,7 @@ from sqlalchemy.pool import StaticPool
 from finrag.api.app import create_app
 from finrag.core.config import Environment, Settings
 from finrag.core.container import Container
+from finrag.generation.extractive import ExtractiveGenerator
 from finrag.indexing.in_memory import HashSparseEncoder
 from finrag.ingestion.text_parser import TextParser
 from finrag.retrieval.rerankers import OverlapReranker
@@ -43,6 +44,7 @@ def env() -> Iterator[Env]:
         vector_store=vectors,
         chunk_repository=SqlChunkRepository(session_factory),
         reranker=OverlapReranker(),
+        generator=ExtractiveGenerator(),
     )
     app = create_app(settings, container=container)
     yield Env(

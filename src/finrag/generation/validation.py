@@ -4,13 +4,7 @@ import re
 from collections.abc import Sequence
 
 from finrag.core.domain import Answer, Citation, DraftAnswer, EvidenceChunk, RefusalReason
-
-REFUSAL_TEXT = {
-    RefusalReason.UNVERIFIABLE: (
-        "An answer was drafted, but its citations could not be verified against the documents."
-    ),
-}
-
+from finrag.generation.refusal import refuse
 
 MARKER = re.compile(r"\[(\d+)\]")
 
@@ -42,25 +36,21 @@ def _has_uncited_sentence(text: str) -> bool:
     return False
 
 
-def _refuse(reason: RefusalReason) -> Answer:
-    return Answer(text=REFUSAL_TEXT[reason], citations=(), refusal_reason=reason)
-
-
 def validate_answer(draft: DraftAnswer, evidence: Sequence[EvidenceChunk]) -> Answer:
     """Resolve every draft Citation against the Evidence."""
     if _has_uncited_sentence(draft.text):
-        return _refuse(RefusalReason.UNVERIFIABLE)
+        return refuse(RefusalReason.UNVERIFIABLE)
     cited_markers = {c.marker for c in draft.citations}
     if any(int(m) not in cited_markers for m in MARKER.findall(draft.text)):
-        return _refuse(RefusalReason.UNVERIFIABLE)
+        return refuse(RefusalReason.UNVERIFIABLE)
     by_id = {chunk.chunk_id: chunk for chunk in evidence}
     citations = []
     for cited in draft.citations:
         chunk = by_id.get(cited.chunk_id)
         if chunk is None:
-            return _refuse(RefusalReason.UNVERIFIABLE)
+            return refuse(RefusalReason.UNVERIFIABLE)
         if _normalise(cited.quoted_span) not in _normalise(chunk.text):
-            return _refuse(RefusalReason.UNVERIFIABLE)
+            return refuse(RefusalReason.UNVERIFIABLE)
         citations.append(
             Citation(
                 marker=cited.marker,
@@ -74,5 +64,5 @@ def validate_answer(draft: DraftAnswer, evidence: Sequence[EvidenceChunk]) -> An
         )
     cited_text = " ".join(by_id[c.chunk_id].text for c in draft.citations)
     if not _numbers(draft.text) <= _numbers(cited_text):
-        return _refuse(RefusalReason.UNVERIFIABLE)
+        return refuse(RefusalReason.UNVERIFIABLE)
     return Answer(text=draft.text, citations=tuple(citations))

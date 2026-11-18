@@ -9,6 +9,7 @@ from sqlalchemy.orm import sessionmaker
 from finrag.core.config import Settings
 from finrag.core.domain import IngestionJob
 from finrag.core.interfaces import (
+    AnswerGenerator,
     BlobStore,
     ChunkRepository,
     Embedder,
@@ -18,6 +19,7 @@ from finrag.core.interfaces import (
     SparseEncoder,
     VectorStore,
 )
+from finrag.generation.service import AnswerService
 from finrag.ingestion.pipeline import IngestionPipeline
 from finrag.ingestion.service import DocumentService
 from finrag.retrieval.retriever import Retriever
@@ -37,6 +39,7 @@ class Container:
     vector_store: VectorStore
     chunk_repository: ChunkRepository
     reranker: Reranker
+    generator: AnswerGenerator
 
     def document_service(self) -> DocumentService:
         return DocumentService(self.session_factory, self.blob_store, self.job_queue, self.settings)
@@ -50,6 +53,9 @@ class Container:
             self.reranker,
             self.settings,
         )
+
+    def answer_service(self) -> AnswerService:
+        return AnswerService(self.retriever(), self.generator)
 
     def ingestion_pipeline(self) -> IngestionPipeline:
         return IngestionPipeline(
@@ -115,6 +121,16 @@ def build_reranker(settings: Settings) -> Reranker:
     return OverlapReranker()
 
 
+def build_generator(settings: Settings) -> AnswerGenerator:
+    """The AnswerGenerator chosen by Settings (ADR-0005)."""
+    from finrag.generation.claude import ClaudeAnswerGenerator
+    from finrag.generation.extractive import ExtractiveGenerator
+
+    if settings.generator_backend == "claude":
+        return ClaudeAnswerGenerator.from_settings(settings)
+    return ExtractiveGenerator()
+
+
 def build_container(settings: Settings) -> Container:
     """Container for the API process: enqueues ingestion jobs onto Procrastinate."""
     from finrag.jobs.queue import ProcrastinateJobQueue, build_app
@@ -152,4 +168,5 @@ def _build(settings: Settings, job_queue: JobQueue) -> Container:
         vector_store=vector_store,
         chunk_repository=SqlChunkRepository(session_factory),
         reranker=build_reranker(settings),
+        generator=build_generator(settings),
     )

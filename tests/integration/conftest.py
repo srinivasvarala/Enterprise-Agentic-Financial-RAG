@@ -3,6 +3,7 @@
 from collections.abc import Iterator
 from uuid import uuid4
 
+import boto3
 import pytest
 from fastapi.testclient import TestClient
 from qdrant_client import QdrantClient
@@ -13,6 +14,20 @@ from finrag.api.app import create_app
 from finrag.core.config import Environment, Settings
 from finrag.core.container import Container, build_container
 from finrag.storage.migrate import upgrade_to_head
+
+
+def _delete_bucket(settings: Settings) -> None:
+    client = boto3.client(
+        "s3",
+        endpoint_url=settings.s3_endpoint_url,
+        aws_access_key_id=settings.s3_access_key.get_secret_value(),
+        aws_secret_access_key=settings.s3_secret_key.get_secret_value(),
+        region_name="us-east-1",
+    )
+    for page in client.get_paginator("list_objects_v2").paginate(Bucket=settings.s3_bucket):
+        for obj in page.get("Contents", []):
+            client.delete_object(Bucket=settings.s3_bucket, Key=obj["Key"])
+    client.delete_bucket(Bucket=settings.s3_bucket)
 
 
 @pytest.fixture(scope="session")
@@ -36,6 +51,7 @@ def settings() -> Iterator[Settings]:
         embedder_backend="hash",
         sparse_backend="hash",
         reranker_backend="overlap",
+        generator_backend="extractive",
         qdrant_collection=f"finrag_test_{suffix}",
     )
     engine = create_engine(test_url)
@@ -45,6 +61,7 @@ def settings() -> Iterator[Settings]:
     engine.dispose()
     yield test_settings
     QdrantClient(url=test_settings.qdrant_url).delete_collection(test_settings.qdrant_collection)
+    _delete_bucket(test_settings)  # SeaweedFS reserves a volume per bucket; leaked ones fill it
     with admin.connect() as conn:
         conn.execute(text(f'DROP DATABASE IF EXISTS "{db_name}" WITH (FORCE)'))
     admin.dispose()
