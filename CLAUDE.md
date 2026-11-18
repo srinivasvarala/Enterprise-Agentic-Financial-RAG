@@ -32,3 +32,18 @@ make eval           # eval suite (real models, costs money)
 - mypy strict on `src/`. Ruff for lint + format.
 - TDD for core logic (chunking, fusion, citation validation, tenancy).
 - Retrieval/generation changes must report eval deltas against the current baseline.
+- Use the vocabulary in `GLOSSARY.md` for names in code, tests, issues and docs.
+
+## Agent skills
+
+### Issue tracker
+
+Issues and specs live in this repo's GitHub Issues, managed via the `gh` CLI. See `docs/agents/issue-tracker.md`.
+
+### Triage labels
+
+Default vocabulary: `needs-triage`, `needs-info`, `ready-for-agent`, `ready-for-human`, `wontfix`. See `docs/agents/triage-labels.md`.
+
+### Domain docs
+
+Single-context: `GLOSSARY.md` + `docs/adr/` at the repo root. See `docs/agents/domain.md`.
