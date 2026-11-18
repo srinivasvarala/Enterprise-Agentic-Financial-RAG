@@ -45,7 +45,10 @@ class Settings(BaseSettings):
     max_upload_bytes: int = 50 * 1024 * 1024
 
     # Chunking and ingestion
-    chunk_max_tokens: int = 800
+    chunk_target_tokens: int = 500  # soft: text chunks close at a paragraph boundary past this
+    chunk_max_tokens: int = 800  # hard ceiling for a text chunk
+    chunk_overlap_tokens: int = 50  # sentence-aligned overlap between chunks of a section
+    table_max_tokens: int = 800  # larger tables split into row groups repeating the header
     embedding_batch_size: int = 64
     ingest_max_attempts: int = 3  # per stage, for transient provider errors
     ingest_retry_base_seconds: float = 2.0  # exponential backoff: base * 2**(attempt - 1)
