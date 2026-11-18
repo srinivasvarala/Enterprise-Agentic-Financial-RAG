@@ -18,6 +18,7 @@ dependencies = [
     "pydantic-settings>=2.16.3",
     "python-multipart>=0.0.34",
     "qdrant-client>=1.20.0",
+    "sentence-transformers>=6.3.0",
     "sqlalchemy>=2.1.9",
     "torch>=2.15.0",  # transitive via Docling; direct so the CPU index below applies
     "torchvision>=0.29.2",

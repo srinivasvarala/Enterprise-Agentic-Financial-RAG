@@ -15,7 +15,7 @@ from uuid import UUID
 from qdrant_client import QdrantClient, models
 from qdrant_client.http.exceptions import ResponseHandlingException, UnexpectedResponse
 
-from finrag.core.domain import ChunkKind, SparseVector, VectorPoint
+from finrag.core.domain import ChunkKind, SearchHit, SparseVector, VectorPoint
 from finrag.core.errors import TransientError
 from finrag.core.tenancy import require_points_of_tenant, require_tenant
 
@@ -134,6 +134,39 @@ class QdrantVectorStore:
     def get_version_points(self, tenant_id: UUID, document_version_id: UUID) -> list[VectorPoint]:
         flt = tenant_filter(tenant_id, document_version_id=document_version_id)
         return [record_to_point(r) for r in self._scroll(flt)]
+
+    def search(
+        self,
+        tenant_id: UUID,
+        collection_id: UUID,
+        dense: tuple[float, ...],
+        sparse: SparseVector,
+        *,
+        dense_k: int,
+        sparse_k: int,
+        rrf_k: int,
+        limit: int,
+    ) -> list[SearchHit]:
+        flt = tenant_filter(tenant_id, collection_id=collection_id)
+        branches = [models.Prefetch(query=list(dense), using=DENSE, filter=flt, limit=dense_k)]
+        if sparse.indices:  # Qdrant rejects an empty sparse query, e.g. a question of stopwords
+            query = models.SparseVector(indices=list(sparse.indices), values=list(sparse.values))
+            branches.append(models.Prefetch(query=query, using=SPARSE, filter=flt, limit=sparse_k))
+        response = _guarded(
+            lambda: self._client.query_points(
+                self._collection,
+                prefetch=branches,
+                query=models.RrfQuery(rrf=models.Rrf(k=rrf_k)),
+                query_filter=flt,
+                limit=limit,
+                with_payload=["chunk_id"],
+            )
+        )
+        return [
+            SearchHit(UUID(str(p.payload["chunk_id"])), p.score)
+            for p in response.points
+            if p.payload
+        ]
 
     # -- internals ---------------------------------------------------------------------------
 

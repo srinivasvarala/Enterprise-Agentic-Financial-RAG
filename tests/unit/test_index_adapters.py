@@ -95,6 +95,33 @@ def test_voyage_requires_an_api_key_from_settings() -> None:
     assert embedder.dimension == 512
 
 
+def test_voyage_embeds_a_question_with_the_query_input_type() -> None:
+    requests: list[dict] = []  # type: ignore[type-arg]
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requests.append(json.loads(request.content))
+        return ok(request)
+
+    vector = voyage(handler).embed_query("how much cash?")
+
+    assert [r["input"] for r in requests] == [["how much cash?"]]
+    assert requests[0]["input_type"] == "query"
+    assert vector == (14.0, 0.0, 1.0)
+
+
+def test_bm25_encoder_encodes_a_question_through_the_models_query_path() -> None:
+    class FakeModel:
+        def embed(self, documents):  # type: ignore[no-untyped-def]
+            raise AssertionError("a question must not use the document path")
+
+        def query_embed(self, query):  # type: ignore[no-untyped-def]
+            return [SimpleNamespace(indices=[4], values=[1.0])]
+
+    encoder = FastEmbedBm25Encoder(model_factory=FakeModel)
+
+    assert encoder.encode_query("cash") == SparseVector((4,), (1.0,))
+
+
 def test_bm25_encoder_maps_model_output_and_loads_lazily() -> None:
     loads = 0
 

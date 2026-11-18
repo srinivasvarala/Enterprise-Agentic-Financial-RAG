@@ -54,11 +54,16 @@ class VoyageEmbedder:
             out += self._embed_batch(list(texts[i : i + self._batch_size]))
         return out
 
-    def _embed_batch(self, batch: list[str]) -> list[tuple[float, ...]]:
+    def embed_query(self, text: str) -> tuple[float, ...]:
+        return self._embed_batch([text], input_type="query")[0]
+
+    def _embed_batch(
+        self, batch: list[str], input_type: str = "document"
+    ) -> list[tuple[float, ...]]:
         payload = {
             "input": batch,
             "model": self._model,
-            "input_type": "document",
+            "input_type": input_type,
             "output_dimension": self._dimension,
         }
         try:

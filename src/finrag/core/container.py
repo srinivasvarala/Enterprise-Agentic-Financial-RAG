@@ -10,14 +10,17 @@ from finrag.core.config import Settings
 from finrag.core.domain import IngestionJob
 from finrag.core.interfaces import (
     BlobStore,
+    ChunkRepository,
     Embedder,
     JobQueue,
     Parser,
+    Reranker,
     SparseEncoder,
     VectorStore,
 )
 from finrag.ingestion.pipeline import IngestionPipeline
 from finrag.ingestion.service import DocumentService
+from finrag.retrieval.retriever import Retriever
 
 log = logging.getLogger(__name__)
 
@@ -32,9 +35,21 @@ class Container:
     embedder: Embedder
     sparse_encoder: SparseEncoder
     vector_store: VectorStore
+    chunk_repository: ChunkRepository
+    reranker: Reranker
 
     def document_service(self) -> DocumentService:
         return DocumentService(self.session_factory, self.blob_store, self.job_queue, self.settings)
+
+    def retriever(self) -> Retriever:
+        return Retriever(
+            self.embedder,
+            self.sparse_encoder,
+            self.vector_store,
+            self.chunk_repository,
+            self.reranker,
+            self.settings,
+        )
 
     def ingestion_pipeline(self) -> IngestionPipeline:
         return IngestionPipeline(
@@ -91,6 +106,15 @@ def build_indexing_adapters(settings: Settings) -> tuple[Embedder, SparseEncoder
     return embedder, sparse, store
 
 
+def build_reranker(settings: Settings) -> Reranker:
+    """The Reranker chosen by Settings (ADR-0005)."""
+    from finrag.retrieval.rerankers import BgeReranker, OverlapReranker
+
+    if settings.reranker_backend == "bge":
+        return BgeReranker.from_settings(settings)
+    return OverlapReranker()
+
+
 def build_container(settings: Settings) -> Container:
     """Container for the API process: enqueues ingestion jobs onto Procrastinate."""
     from finrag.jobs.queue import ProcrastinateJobQueue, build_app
@@ -109,19 +133,23 @@ class _NoQueue:
 
 
 def _build(settings: Settings, job_queue: JobQueue) -> Container:
+    from finrag.storage.chunk_repository import SqlChunkRepository
     from finrag.storage.db import build_engine, build_session_factory
     from finrag.storage.s3_blob_store import S3BlobStore
 
     blob_store = S3BlobStore.from_settings(settings)
     blob_store.ensure_bucket()
     embedder, sparse_encoder, vector_store = build_indexing_adapters(settings)
+    session_factory = build_session_factory(build_engine(settings))
     return Container(
         settings=settings,
-        session_factory=build_session_factory(build_engine(settings)),
+        session_factory=session_factory,
         blob_store=blob_store,
         job_queue=job_queue,
         parsers=build_parsers(settings),
         embedder=embedder,
         sparse_encoder=sparse_encoder,
         vector_store=vector_store,
+        chunk_repository=SqlChunkRepository(session_factory),
+        reranker=build_reranker(settings),
     )

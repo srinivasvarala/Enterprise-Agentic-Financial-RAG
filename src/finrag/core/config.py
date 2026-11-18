@@ -48,6 +48,10 @@ class Settings(BaseSettings):
     voyage_batch_size: int = 64
     voyage_timeout_seconds: float = 60.0
 
+    # Which Reranker the composition root wires; `overlap` is an offline stand-in for tests
+    reranker_backend: Literal["bge", "overlap"] = "bge"
+    reranker_model: str = "BAAI/bge-reranker-base"  # downloaded on first use
+
     # FastEmbed BM25 sparse encoder (model files download on first use)
     fastembed_bm25_model: str = "Qdrant/bm25"
     fastembed_cache_dir: str | None = None
@@ -80,6 +84,16 @@ class Settings(BaseSettings):
     # lost enqueue) and its ingestion job is re-deferred by the reconciler. Must exceed the
     # longest single stage (Docling on a large 10-K).
     stuck_document_seconds: int = 900
+
+    # Retrieval: each branch's candidates, RRF constant and Evidence size (tuned via the evals)
+    retrieve_dense_k: int = 50
+    retrieve_sparse_k: int = 50
+    rrf_k: int = 60
+    rerank_top_n: int = 8
+    # Reranker scores run 0..1. Permissive until the Golden Set calibrates it: with no Evidence the
+    # answer is a Refusal, and an early false refusal costs more than a weak chunk the validator
+    # will still check.
+    min_rerank_score: float = 0.0
 
     # OpenTelemetry (Phoenix locally)
     otel_exporter_endpoint: str = "http://localhost:6006/v1/traces"

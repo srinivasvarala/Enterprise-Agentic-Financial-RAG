@@ -3,7 +3,7 @@
 from collections.abc import Callable, Sequence
 from uuid import UUID
 
-from finrag.core.domain import IngestionJob, VectorPoint
+from finrag.core.domain import EvidenceChunk, IngestionJob, VectorPoint
 from finrag.indexing.in_memory import HashEmbedder, InMemoryVectorStore
 
 
@@ -54,3 +54,32 @@ class SpyVectorStore(InMemoryVectorStore):
         if self.before_upsert is not None:
             self.before_upsert()
         super().upsert(tenant_id, points)
+
+
+class InMemoryChunkRepository:
+    """Evidence chunks keyed by (tenant, collection); unknown ids are simply absent."""
+
+    def __init__(self) -> None:
+        self._chunks: dict[tuple[UUID, UUID, UUID], EvidenceChunk] = {}
+
+    def add(self, tenant_id: UUID, collection_id: UUID, chunk: EvidenceChunk) -> None:
+        self._chunks[(tenant_id, collection_id, chunk.chunk_id)] = chunk
+
+    def remove(self, tenant_id: UUID, collection_id: UUID, chunk_id: UUID) -> None:
+        del self._chunks[(tenant_id, collection_id, chunk_id)]
+
+    def get_many(
+        self, tenant_id: UUID, collection_id: UUID, chunk_ids: Sequence[UUID]
+    ) -> list[EvidenceChunk]:
+        found = (self._chunks.get((tenant_id, collection_id, i)) for i in chunk_ids)
+        return [c for c in found if c is not None]
+
+
+class FixedReranker:
+    """Scores chunks from a table, so a test controls the rerank order exactly."""
+
+    def __init__(self) -> None:
+        self.scores: dict[UUID, float] = {}
+
+    def score(self, question: str, chunks: Sequence[EvidenceChunk]) -> list[float]:
+        return [self.scores.get(c.chunk_id, 0.0) for c in chunks]
