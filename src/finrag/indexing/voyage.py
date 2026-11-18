@@ -14,10 +14,10 @@ class VoyageEmbedder:
         api_key: str,
         model: str,
         dimension: int,
-        base_url: str = "https://api.voyageai.com/v1",
-        batch_size: int = 64,
+        base_url: str,
+        batch_size: int,
+        timeout_seconds: float,
         client: httpx.Client | None = None,
-        timeout_seconds: float = 60.0,
     ) -> None:
         self._model = model
         self._dimension = dimension

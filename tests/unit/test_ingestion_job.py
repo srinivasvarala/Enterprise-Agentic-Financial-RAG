@@ -10,6 +10,7 @@ from harness import Env
 from httpx import Response
 from sqlalchemy import select
 
+from finrag.core.domain import ParsedDocument
 from finrag.core.errors import TenantRequiredError, TransientError
 from finrag.core.logging import JsonFormatter
 from finrag.storage.models import Chunk
@@ -168,17 +169,57 @@ def test_transient_errors_retry_with_backoff_then_succeed(env: Env) -> None:
     assert env.sleeps == [2.0, 4.0]  # base 2s, doubling
 
 
-def test_transient_errors_beyond_the_limit_fail_with_a_reason(env: Env) -> None:
+def test_transient_errors_beyond_the_limit_fail_with_a_generic_reason(env: Env) -> None:
     env.embedder.failures, env.embedder.error = 99, TransientError("503 unavailable")
     doc_id = upload(env).json()["id"]
     (job,) = env.run_jobs()
 
     document = doc(env, doc_id)
     assert document["status"] == "failed"
+    assert "embedding" in document["failure_reason"]
     assert "3 attempts" in document["failure_reason"]
-    assert "503 unavailable" in document["failure_reason"]
+    assert "503 unavailable" not in document["failure_reason"]
     assert env.embedder.calls == env.settings.ingest_max_attempts
     assert env.vectors.get_version_points(job.tenant_id, job.document_version_id) == []
+
+
+def test_provider_error_details_are_logged_but_never_shown_to_the_admin(
+    env: Env, caplog: pytest.LogCaptureFixture
+) -> None:
+    caplog.set_level(logging.INFO, logger="finrag")
+    leak = "connect to qdrant.internal.corp:6333 failed"
+    env.embedder.failures, env.embedder.error = 99, TransientError(leak)
+    doc_id = upload(env).json()["id"]
+    (job,) = env.run_jobs()
+
+    body = env.client.get(f"/documents/{doc_id}").text
+    assert "qdrant.internal.corp" not in body
+    detail = [r for r in caplog.records if "qdrant.internal.corp" in str(getattr(r, "error", ""))]
+    assert detail
+    assert all(
+        getattr(r, "tenant_id", None) == str(job.tenant_id)
+        and getattr(r, "document_id", None) == str(job.document_id)
+        and getattr(r, "job_id", None) == "test-job-0"
+        for r in detail
+    )
+
+
+class _FlakyParser:
+    def parse(self, data: bytes) -> ParsedDocument:
+        raise TransientError("blob host s3.internal unreachable")
+
+
+def test_a_transient_error_that_was_never_retried_does_not_claim_attempts(env: Env) -> None:
+    env.container.parsers = {"text/plain": _FlakyParser()}
+    doc_id = upload(env).json()["id"]
+
+    env.run_jobs()
+
+    document = doc(env, doc_id)
+    assert document["status"] == "failed"
+    assert "attempts" not in document["failure_reason"]
+    assert "s3.internal" not in document["failure_reason"]
+    assert "parsing" in document["failure_reason"]
 
 
 def test_unexpected_errors_fail_without_leaking_internals(env: Env) -> None:
@@ -269,3 +310,11 @@ def test_vector_store_rejects_calls_without_a_tenant(env: Env) -> None:
         env.vectors.upsert(None, [])  # type: ignore[arg-type]
     with pytest.raises(TenantRequiredError):
         env.vectors.delete_version(None, uuid4())  # type: ignore[arg-type]
+
+
+def test_startup_check_prepares_the_vector_collection_for_the_embedder_dimension(env: Env) -> None:
+    assert env.vectors.dimension is None
+
+    env.pipeline().startup_check()
+
+    assert env.vectors.dimension == env.embedder.dimension

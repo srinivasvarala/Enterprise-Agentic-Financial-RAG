@@ -1,4 +1,4 @@
-.PHONY: install build up down logs migrate dev lint fmt test test-int eval
+.PHONY: install build up down logs migrate reconcile dev lint fmt test test-int eval
 
 install:
 	uv sync
@@ -18,6 +18,9 @@ logs:
 
 migrate:
 	uv run alembic upgrade head
+
+reconcile: # re-defer ingestion jobs of Documents stuck by a crash (also runs at worker startup)
+	uv run python -m finrag.jobs.reconcile
 
 dev:
 	uv run uvicorn finrag.api.app:app --reload --port 8000

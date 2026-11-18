@@ -10,7 +10,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, sessionmaker
 
 from finrag.core.config import Settings
-from finrag.core.domain import IngestionJob, Principal
+from finrag.core.domain import ChunkKind, DocumentStatus, IngestionJob, Principal
 from finrag.core.interfaces import BlobStore, JobQueue
 from finrag.storage.models import Chunk, Document, DocumentVersion
 
@@ -21,11 +21,11 @@ class UnsupportedMediaTypeError(Exception):
     pass
 
 
-class FileTooLargeError(Exception):
+class DocumentTooLargeError(Exception):
     pass
 
 
-class EmptyFileError(Exception):
+class EmptyDocumentError(Exception):
     pass
 
 
@@ -37,7 +37,7 @@ class DocumentView(BaseModel):
     filename: str
     media_type: str
     size_bytes: int
-    status: str
+    status: DocumentStatus
     failure_reason: str | None
     chunk_count: int
     created_at: datetime
@@ -58,7 +58,7 @@ class ChunkView(BaseModel):
     document_id: UUID
     document_version_id: UUID
     ordinal: int
-    kind: str
+    kind: ChunkKind
     text: str
     section_path: list[str]
     page_start: int
@@ -98,9 +98,9 @@ class DocumentService:
         if media_type not in SUPPORTED_MEDIA_TYPES:
             raise UnsupportedMediaTypeError(media_type)
         if len(data) > self._settings.max_upload_bytes:
-            raise FileTooLargeError
+            raise DocumentTooLargeError
         if not data:
-            raise EmptyFileError
+            raise EmptyDocumentError
 
         sha256 = hashlib.sha256(data).hexdigest()
         with self._session_factory() as session:

@@ -7,6 +7,7 @@ from uuid import UUID
 import procrastinate
 from procrastinate import JobContext, SyncPsycopgConnector
 from procrastinate.connector import BaseConnector
+from procrastinate.exceptions import AlreadyEnqueued
 
 from finrag.core.config import Settings
 from finrag.core.domain import IngestionJob
@@ -66,12 +67,18 @@ class ProcrastinateJobQueue:
         self._open: AbstractContextManager[procrastinate.App] = app.open()
         self._open.__enter__()
 
-    def enqueue_ingestion(self, job: IngestionJob) -> None:
-        self._app.configure_task(INGEST_TASK).defer(
-            tenant_id=str(job.tenant_id),
-            document_id=str(job.document_id),
-            document_version_id=str(job.document_version_id),
-        )
+    def enqueue_ingestion(self, job: IngestionJob) -> bool:
+        # The queueing lock allows at most one *waiting* job per Document Version, so the API
+        # and the reconciler can both enqueue without ever piling up duplicates.
+        try:
+            self._app.configure_task(INGEST_TASK, queueing_lock=str(job.document_version_id)).defer(
+                tenant_id=str(job.tenant_id),
+                document_id=str(job.document_id),
+                document_version_id=str(job.document_version_id),
+            )
+        except AlreadyEnqueued:
+            return False
+        return True
 
     def close(self) -> None:
         self._open.__exit__(None, None, None)

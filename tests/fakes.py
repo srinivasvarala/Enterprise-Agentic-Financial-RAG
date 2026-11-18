@@ -17,16 +17,14 @@ class InMemoryBlobStore:
     def get(self, key: str) -> bytes:
         return self.objects[key]
 
-    def exists(self, key: str) -> bool:
-        return key in self.objects
-
 
 class InMemoryJobQueue:
     def __init__(self) -> None:
         self.jobs: list[IngestionJob] = []
 
-    def enqueue_ingestion(self, job: IngestionJob) -> None:
+    def enqueue_ingestion(self, job: IngestionJob) -> bool:
         self.jobs.append(job)
+        return True
 
 
 class FlakyEmbedder(HashEmbedder):

@@ -17,15 +17,29 @@ from sqlalchemy import delete, select
 from sqlalchemy.orm import Session, sessionmaker
 
 from finrag.core.config import Settings
-from finrag.core.domain import DocumentStatus, IngestionJob, SparseVector, VectorPoint
+from finrag.core.domain import (
+    DocumentStatus,
+    IngestionJob,
+    ParsedDocument,
+    SparseVector,
+    VectorPoint,
+)
 from finrag.core.errors import ParseError, TransientError
 from finrag.core.interfaces import BlobStore, Embedder, Parser, SparseEncoder, VectorStore
 from finrag.ingestion.chunking import ChunkDraft, ChunkingConfig, chunk_document
-from finrag.ingestion.parsed import ParsedDocument
 from finrag.storage.models import Chunk, Document, DocumentVersion
 
 log = logging.getLogger(__name__)
 T = TypeVar("T")
+
+
+class _RetriesExhaustedError(TransientError):
+    """A TransientError that was retried `attempts` times and kept failing."""
+
+    def __init__(self, attempts: int, cause: TransientError) -> None:
+        super().__init__(f"gave up after {attempts} attempts")
+        self.attempts = attempts
+        self.cause = cause
 
 
 def chunk_id_for(document_version_id: UUID, ordinal: int) -> UUID:
@@ -53,6 +67,10 @@ class IngestionPipeline:
         self._vectors = vector_store
         self._settings = settings
         self._sleep = sleep
+
+    def startup_check(self) -> None:
+        """Worker startup: fail fast if the vector collection mismatches the embedder dimension."""
+        self._vectors.ensure_collection(self._embedder.dimension)
 
     def run(self, job: IngestionJob, job_id: str | None = None) -> None:
         """Ingest one Document Version. Terminal outcome is recorded on the Document."""
@@ -83,11 +101,20 @@ class IngestionPipeline:
             self._set_status(job, DocumentStatus.READY, ctx)
         except ParseError as exc:
             self._fail(job, str(exc), ctx)
-        except TransientError as exc:
-            attempts = self._settings.ingest_max_attempts
+        except _RetriesExhaustedError as exc:
+            # The adapter's message can carry hostnames and URLs: log it, never store it.
+            log.error("provider failed, retries exhausted", extra={**ctx, "error": str(exc.cause)})
             self._fail(
                 job,
-                f"A provider kept failing during {stage.value} after {attempts} attempts: {exc}",
+                f"A provider was unavailable during {stage.value} "
+                f"after {exc.attempts} attempts. Retry later or contact support.",
+                ctx,
+            )
+        except TransientError as exc:
+            log.error("provider failed without retry", extra={**ctx, "error": str(exc)})
+            self._fail(
+                job,
+                f"A provider was unavailable during {stage.value}. Retry later or contact support.",
                 ctx,
             )
         except Exception:
@@ -196,7 +223,7 @@ class IngestionPipeline:
                 return fn()
             except TransientError as exc:
                 if attempt == attempts:
-                    raise
+                    raise _RetriesExhaustedError(attempts, exc) from exc
                 delay = self._settings.ingest_retry_base_seconds * 2 ** (attempt - 1)
                 log.warning(
                     "transient error, retrying",

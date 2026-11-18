@@ -4,15 +4,15 @@ import itertools
 
 import pytest
 
-from finrag.core.domain import ChunkKind
-from finrag.ingestion.chunking import ChunkingConfig, chunk_document, count_tokens
-from finrag.ingestion.parsed import (
+from finrag.core.domain import (
     BoundingBox,
+    ChunkKind,
     HeadingBlock,
     ParagraphBlock,
     ParsedDocument,
     TableBlock,
 )
+from finrag.ingestion.chunking import ChunkingConfig, chunk_document, count_tokens
 from finrag.ingestion.text_parser import TextParser
 
 

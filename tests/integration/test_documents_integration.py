@@ -2,18 +2,20 @@
 
 import hashlib
 import os
+from datetime import UTC, datetime, timedelta
 from uuid import UUID, uuid4
 
 import pytest
 from alembic.autogenerate import compare_metadata
 from alembic.migration import MigrationContext
 from fastapi.testclient import TestClient
-from sqlalchemy import select, text
+from sqlalchemy import select, text, update
 
 from finrag.core.config import Settings
 from finrag.core.container import Container
 from finrag.core.domain import IngestionJob
-from finrag.storage.models import Base, Collection, DocumentVersion, Tenant
+from finrag.jobs.reconcile import reconcile_stuck_documents
+from finrag.storage.models import Base, Collection, Document, DocumentVersion, Tenant
 
 pytestmark = pytest.mark.integration
 
@@ -168,3 +170,47 @@ def test_validation_errors(client: TestClient, settings: Settings) -> None:
     assert upload(client, b"x", "application/zip").status_code == 415
     assert upload(client, b"x" * (settings.max_upload_bytes + 1)).status_code == 413
     assert upload(client, b"").status_code == 422
+
+
+def _jobs_for(container: Container, version_id: UUID) -> int:
+    with container.session_factory() as session:
+        return session.scalar(
+            text("SELECT count(*) FROM procrastinate_jobs WHERE args->>'document_version_id' = :v"),
+            {"v": str(version_id)},
+        )
+
+
+def test_reconciler_redefers_a_lost_job_once_and_never_duplicates_a_queued_one(
+    client: TestClient, container: Container, settings: Settings
+) -> None:
+    doc_id = upload(client, unique_bytes()).json()["id"]
+    with container.session_factory() as session:
+        version = session.scalars(
+            select(DocumentVersion).where(DocumentVersion.document_id == UUID(doc_id))
+        ).one()
+        old = datetime.now(UTC) - timedelta(seconds=settings.stuck_document_seconds + 60)
+        session.execute(update(Document).where(Document.id == UUID(doc_id)).values(updated_at=old))
+        session.commit()
+
+    def reconcile() -> list[IngestionJob]:
+        jobs = reconcile_stuck_documents(
+            container.session_factory, container.job_queue, settings.stuck_document_seconds
+        )
+        return [j for j in jobs if j.document_id == version.document_id]
+
+    assert _jobs_for(container, version.id) == 1  # the upload's own job is still waiting
+    assert reconcile() == []  # so nothing is enqueued on top of it
+    assert _jobs_for(container, version.id) == 1
+
+    with container.session_factory() as session:  # the job is lost (e.g. the enqueue failed)
+        session.execute(
+            text("DELETE FROM procrastinate_jobs WHERE args->>'document_version_id' = :v"),
+            {"v": str(version.id)},
+        )
+        session.commit()
+    redeferred = reconcile()
+    assert [(j.tenant_id, j.document_version_id) for j in redeferred] == [
+        (version.tenant_id, version.id)
+    ]
+    assert reconcile() == []
+    assert _jobs_for(container, version.id) == 1

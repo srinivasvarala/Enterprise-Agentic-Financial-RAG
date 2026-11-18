@@ -9,9 +9,9 @@ from pathlib import Path
 
 import pytest
 
+from finrag.core.domain import HeadingBlock, ParagraphBlock, ParsedDocument, TableBlock
 from finrag.core.errors import ParseError
 from finrag.ingestion.docling_parser import DoclingParser
-from finrag.ingestion.parsed import HeadingBlock, ParagraphBlock, ParsedDocument, TableBlock
 
 pytestmark = pytest.mark.integration
 

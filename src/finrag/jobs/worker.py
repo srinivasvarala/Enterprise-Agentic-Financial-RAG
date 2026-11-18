@@ -11,6 +11,7 @@ from procrastinate import App, PsycopgConnector
 from finrag.core.config import Settings, get_settings
 from finrag.core.logging import configure_logging
 from finrag.jobs.queue import build_app, lazy_pipeline
+from finrag.jobs.reconcile import run_reconciliation
 from finrag.storage.db import psycopg_dsn
 
 log = logging.getLogger(__name__)
@@ -28,7 +29,8 @@ def main(settings: Settings | None = None) -> None:
     settings = settings or get_settings()
     configure_logging(settings.log_level)
     provider = lazy_pipeline(settings)
-    provider()  # fail fast on bad configuration
+    provider().startup_check()  # fail fast on bad configuration or a vector dimension mismatch
+    run_reconciliation(settings)  # re-defer Documents a previous crash orphaned
     # The worker loop is async, so it needs the async connector (the API enqueues synchronously).
     run(
         build_app(

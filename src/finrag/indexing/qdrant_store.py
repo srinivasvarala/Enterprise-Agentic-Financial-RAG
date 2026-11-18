@@ -8,6 +8,7 @@ network traffic.
 
 import logging
 from collections.abc import Callable, Iterator, Sequence
+from functools import partial
 from typing import Any
 from uuid import UUID
 
@@ -15,7 +16,8 @@ from qdrant_client import QdrantClient, models
 from qdrant_client.http.exceptions import ResponseHandlingException, UnexpectedResponse
 
 from finrag.core.domain import ChunkKind, SparseVector, VectorPoint
-from finrag.core.errors import TenantRequiredError, TransientError
+from finrag.core.errors import TransientError
+from finrag.core.tenancy import require_points_of_tenant, require_tenant
 
 log = logging.getLogger(__name__)
 
@@ -72,10 +74,10 @@ def record_to_point(record: Any) -> VectorPoint:
 
 def tenant_filter(tenant_id: UUID | None, **equals: UUID) -> models.Filter:
     """The only way this module builds a filter: tenant id is mandatory."""
-    if tenant_id is None:
-        raise TenantRequiredError("tenant_id is required on every vector store call")
     conditions: list[Any] = [
-        models.FieldCondition(key="tenant_id", match=models.MatchValue(value=str(tenant_id)))
+        models.FieldCondition(
+            key="tenant_id", match=models.MatchValue(value=str(require_tenant(tenant_id)))
+        )
     ]
     conditions += [
         models.FieldCondition(key=key, match=models.MatchValue(value=str(value)))
@@ -84,7 +86,7 @@ def tenant_filter(tenant_id: UUID | None, **equals: UUID) -> models.Filter:
     return models.Filter(must=conditions)
 
 
-def to_transient(exc: Exception) -> Exception:
+def _to_transient(exc: Exception) -> Exception:
     """Map a qdrant-client failure to TransientError when a retry may help, else return it."""
     if isinstance(exc, ResponseHandlingException):  # timeouts, connection errors
         return TransientError(f"qdrant unavailable: {exc}")
@@ -97,7 +99,7 @@ def _guarded[T](fn: Callable[[], T]) -> T:
     try:
         return fn()
     except (ResponseHandlingException, UnexpectedResponse) as exc:
-        mapped = to_transient(exc)
+        mapped = _to_transient(exc)
         if mapped is exc:
             raise
         raise mapped from exc
@@ -116,13 +118,10 @@ class QdrantVectorStore:
         _guarded(lambda: self._ensure_collection(dimension))
 
     def upsert(self, tenant_id: UUID, points: Sequence[VectorPoint]) -> None:
-        tenant_filter(tenant_id)  # rejects None
-        for point in points:
-            if point.tenant_id != tenant_id:
-                raise TenantRequiredError("point tenant does not match the write's tenant")
+        require_points_of_tenant(require_tenant(tenant_id), points)
         for i in range(0, len(points), UPSERT_BATCH):
             batch = [point_to_struct(p) for p in points[i : i + UPSERT_BATCH]]
-            _guarded(partial_upsert(self._client, self._collection, batch))
+            _guarded(partial(self._client.upsert, self._collection, batch, wait=True))
 
     def delete_version(self, tenant_id: UUID, document_version_id: UUID) -> None:
         flt = tenant_filter(tenant_id, document_version_id=document_version_id)
@@ -141,10 +140,20 @@ class QdrantVectorStore:
     def _scroll(self, flt: models.Filter) -> Iterator[Any]:
         offset: Any = None
         while True:
-            records, offset = _guarded(partial_scroll(self._client, self._collection, flt, offset))
+            records, offset = _guarded(partial(self._scroll_page, flt, offset))
             yield from records
             if offset is None:
                 return
+
+    def _scroll_page(self, flt: models.Filter, offset: Any) -> Any:
+        return self._client.scroll(
+            self._collection,
+            scroll_filter=flt,
+            limit=SCROLL_PAGE,
+            offset=offset,
+            with_payload=True,
+            with_vectors=True,
+        )
 
     def _ensure_collection(self, dimension: int) -> None:
         if not self._client.collection_exists(self._collection):
@@ -189,22 +198,3 @@ class QdrantVectorStore:
                 self._client.create_payload_index(
                     self._collection, field_name=field, field_schema=field_schema, wait=True
                 )
-
-
-def partial_upsert(
-    client: QdrantClient, collection: str, batch: list[models.PointStruct]
-) -> Callable[[], Any]:
-    return lambda: client.upsert(collection, batch, wait=True)
-
-
-def partial_scroll(
-    client: QdrantClient, collection: str, flt: models.Filter, offset: Any
-) -> Callable[[], Any]:
-    return lambda: client.scroll(
-        collection,
-        scroll_filter=flt,
-        limit=SCROLL_PAGE,
-        offset=offset,
-        with_payload=True,
-        with_vectors=True,
-    )

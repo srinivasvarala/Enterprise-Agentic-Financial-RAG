@@ -18,9 +18,9 @@ import itertools
 import re
 from dataclasses import dataclass
 
-from finrag.core.domain import ChunkKind
-from finrag.ingestion.parsed import (
+from finrag.core.domain import (
     BoundingBox,
+    ChunkKind,
     HeadingBlock,
     ParagraphBlock,
     ParsedDocument,

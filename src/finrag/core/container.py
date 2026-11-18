@@ -17,6 +17,7 @@ from finrag.core.interfaces import (
     VectorStore,
 )
 from finrag.ingestion.pipeline import IngestionPipeline
+from finrag.ingestion.service import DocumentService
 
 log = logging.getLogger(__name__)
 
@@ -31,6 +32,9 @@ class Container:
     embedder: Embedder
     sparse_encoder: SparseEncoder
     vector_store: VectorStore
+
+    def document_service(self) -> DocumentService:
+        return DocumentService(self.session_factory, self.blob_store, self.job_queue, self.settings)
 
     def ingestion_pipeline(self) -> IngestionPipeline:
         return IngestionPipeline(
@@ -100,7 +104,7 @@ def build_ingestion_pipeline(settings: Settings) -> IngestionPipeline:
 
 
 class _NoQueue:
-    def enqueue_ingestion(self, job: IngestionJob) -> None:
+    def enqueue_ingestion(self, job: IngestionJob) -> bool:
         raise RuntimeError("this container has no job queue")
 
 

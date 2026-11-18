@@ -58,7 +58,7 @@ def test_exactly_at_size_limit_is_accepted(env: Env) -> None:
     assert upload(env, b"x" * env.settings.max_upload_bytes).status_code == 202
 
 
-def test_empty_file_is_422(env: Env) -> None:
+def test_empty_document_is_422(env: Env) -> None:
     assert upload(env, b"").status_code == 422
 
 
