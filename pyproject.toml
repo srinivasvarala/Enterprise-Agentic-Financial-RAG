@@ -32,6 +32,7 @@ build-backend = "uv_build"
 dev = [
     "boto3-stubs[s3]>=1.44.5",
     "httpx>=0.28.1",
+    "import-linter>=2.17",
     "mypy>=2.4.1",
     "pre-commit>=4.7.0",
     "pytest>=9.2.0",
@@ -56,11 +57,36 @@ extend-exclude = [".claude"]  # agent worktrees live inside the repo directory
 target-version = "py312"
 
 [tool.ruff.lint]
-select = ["E", "F", "W", "I", "B", "UP", "SIM", "RUF", "N", "S", "ASYNC"]
+select = ["E", "F", "W", "I", "B", "UP", "SIM", "RUF", "N", "S", "ASYNC", "TID"]
 ignore = ["S101"]  # assert is fine in tests
+
+[tool.ruff.lint.flake8-tidy-imports.banned-api]
+"os.environ".msg = "Read config via finrag.core.config.Settings (CODING_STANDARDS.md)."
+"os.getenv".msg = "Read config via finrag.core.config.Settings (CODING_STANDARDS.md)."
+"langchain".msg = "Framework-free core: LangChain only inside finrag/guardrails (ADR-0002)."
+"langchain_core".msg = "Framework-free core: LangChain only inside finrag/guardrails (ADR-0002)."
+"llama_index".msg = "Framework-free core (ADR-0002)."
 
 [tool.ruff.lint.per-file-ignores]
 "tests/**" = ["S"]
+"src/finrag/core/config.py" = ["TID251"]  # the one place that reads the environment
+"src/finrag/guardrails/**" = ["TID251"]  # NeMo Guardrails pulls in LangChain (ADR-0004)
+
+[tool.importlinter]
+root_package = "finrag"
+
+[[tool.importlinter.contracts]]
+name = "core depends on no feature module (only the composition root wires adapters)"
+type = "forbidden"
+source_modules = ["finrag.core"]
+forbidden_modules = [
+    "finrag.api",
+    "finrag.indexing",
+    "finrag.ingestion",
+    "finrag.jobs",
+    "finrag.storage",
+]
+ignore_imports = ["finrag.core.container -> finrag.**"]
 
 [tool.mypy]
 strict = true
