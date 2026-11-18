@@ -17,6 +17,7 @@ Mapping notes:
 import io
 import logging
 import re
+from dataclasses import replace
 from typing import TYPE_CHECKING, Any
 
 from finrag.core.domain import (
@@ -36,6 +37,7 @@ log = logging.getLogger(__name__)
 
 _PART = re.compile(r"^\s*part\s+[ivx]+\b", re.IGNORECASE)
 _ITEM = re.compile(r"^\s*item\s+\d+[a-c]?\s*[.:\u2013\u2014-]", re.IGNORECASE)
+_TABLE_CAPTION = re.compile(r"^\s*table\s+\d+[a-z]?\s*[.:\u2013\u2014-]", re.IGNORECASE)
 _SKIPPED_LABELS = {"page_header", "page_footer"}
 _TEXT_LABELS = {"text", "paragraph", "list_item", "footnote", "formula", "code", "caption"}
 
@@ -111,7 +113,30 @@ def _map_document(doc: Any) -> tuple[Block, ...]:
             text = item.text.strip()
             if text:
                 blocks.append(ParagraphBlock(text=text, page=page, bbox=bbox))
-    return tuple(blocks)
+    return promote_table_captions(blocks)
+
+
+def promote_table_captions(blocks: list[Block]) -> tuple[Block, ...]:
+    """Attach a "Table N: ..." line to the table that follows it.
+
+    Layout models disagree across platforms about whether such a line is a caption, a section
+    heading or a paragraph (the CPU-torch build used in Linux/Docker labels it a heading). Left
+    as a heading it would also pollute the Section Path of every chunk after the table. A table
+    that already has a caption is left alone, and the line must be on the table's page.
+    """
+    result: list[Block] = []
+    for block in blocks:
+        if isinstance(block, TableBlock) and block.caption is None and result:
+            previous = result[-1]
+            if (
+                isinstance(previous, HeadingBlock | ParagraphBlock)
+                and previous.page == block.page
+                and _TABLE_CAPTION.match(previous.text)
+            ):
+                result.pop()
+                block = replace(block, caption=previous.text.strip())
+        result.append(block)
+    return tuple(result)
 
 
 def _heading_level(text: str, docling_level: int, structural_level: int) -> tuple[int, int]:
