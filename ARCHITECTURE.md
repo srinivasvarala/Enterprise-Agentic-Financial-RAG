@@ -58,9 +58,11 @@ Delete removes blob, rows and vectors.
 ### Query
 1. Authenticate API key → tenant, role, permitted collections.
 2. Input rails (jailbreak/injection, off-topic).
-3. Hybrid retrieval in Qdrant: top-50 dense + top-50 BM25, mandatory `tenant_id` + collection +
-   metadata filters, fused server-side with RRF (k=60).
-4. Rerank with a bge cross-encoder → top 8.
+3. Hybrid retrieval in Qdrant: top-50 dense + top-50 BM25, mandatory `tenant_id` + collection
+   filters, fused server-side with RRF (k=60). Document Metadata filters (company, ticker, fiscal
+   period) are deferred: the index carries no metadata until a later milestone adds extraction.
+4. Rerank with a bge cross-encoder → top 8. Chunk text, section path and pages are loaded from
+   Postgres by chunk id (Qdrant holds ids only); ids missing from Postgres are dropped.
 5. Retrieval rail strips instruction-like content from chunks (documents are untrusted).
 6. Generate with Claude Sonnet; structured output `{answer, citations[]}`. Every factual sentence
    cites `[n]`; each citation resolves to document, page(s), section path and a quoted span.

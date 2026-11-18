@@ -9,6 +9,7 @@
 | [0005](0005-model-providers.md) | Pluggable model providers with hosted defaults |
 | [0006](0006-quote-numbers-never-compute.md) | v1 quotes numbers, never computes them |
 | [0007](0007-storage-and-jobs.md) | Postgres system of record, S3 blobs, Procrastinate jobs |
+| [0008](0008-buffer-then-validate-answers.md) | Buffer, validate, then stream; unverifiable answers are refused |
 
 New ADRs: copy the shape of an existing one, number sequentially, never edit an accepted ADR's
 decision — supersede it with a new ADR instead.
