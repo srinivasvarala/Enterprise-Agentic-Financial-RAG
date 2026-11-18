@@ -1,0 +1,20 @@
+.git
+.github
+.claude
+.venv
+.env
+**/__pycache__
+**/*.pyc
+.pytest_cache
+.mypy_cache
+.ruff_cache
+dist
+evals/results
+.DS_Store
+docs
+*.md
+# Only the warm-up fixture is needed in the build context (see Dockerfile).
+tests/*
+!tests/fixtures
+tests/fixtures/*
+!tests/fixtures/example_10k_extract.pdf

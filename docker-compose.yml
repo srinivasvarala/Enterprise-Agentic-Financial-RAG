@@ -1,5 +1,29 @@
-# Local development stack. App services (api, worker) are added in M1.
+# Local stack: infrastructure plus the ingestion path (migrate -> api + worker, one shared image).
+# Embeddings: set FINRAG_VOYAGE_API_KEY (host env or .env), or run offline with
+#   FINRAG_EMBEDDER_BACKEND=hash FINRAG_SPARSE_BACKEND=hash make up
 name: finrag
+
+x-app: &app
+  build: .
+  image: finrag-app:local
+  environment: &app-env
+    FINRAG_ENV: local
+    FINRAG_DATABASE_URL: postgresql+psycopg://finrag:finrag@postgres:5432/finrag
+    FINRAG_QDRANT_URL: http://qdrant:6333
+    FINRAG_S3_ENDPOINT_URL: http://seaweedfs:8333
+    FINRAG_OTEL_EXPORTER_ENDPOINT: http://phoenix:6006/v1/traces
+    FINRAG_VOYAGE_API_KEY: ${FINRAG_VOYAGE_API_KEY:-}
+    FINRAG_EMBEDDER_BACKEND: ${FINRAG_EMBEDDER_BACKEND:-voyage}
+    FINRAG_SPARSE_BACKEND: ${FINRAG_SPARSE_BACKEND:-fastembed}
+  depends_on: &app-deps
+    migrate:
+      condition: service_completed_successfully
+    postgres:
+      condition: service_healthy
+    qdrant:
+      condition: service_healthy
+    seaweedfs:
+      condition: service_healthy
 
 services:
   postgres:
@@ -17,9 +41,14 @@ services:
       retries: 10
 
   qdrant:
-    image: qdrant/qdrant:v1.15.4
+    image: qdrant/qdrant:v1.20.0 # server minor matches the pinned qdrant-client (1.20)
     ports: ["6333:6333", "6334:6334"]
     volumes: [qdrant-data:/qdrant/storage]
+    healthcheck: # the image ships no curl; probe the REST port with bash
+      test: ["CMD-SHELL", "bash -c ':> /dev/tcp/127.0.0.1/6333'"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
 
   # S3-compatible blob store (ADR-0007). MinIO no longer publishes community images.
   seaweedfs:
@@ -29,6 +58,13 @@ services:
     volumes:
       - seaweedfs-data:/data
       - ./infra/seaweedfs/s3.json:/etc/seaweedfs/s3.json:ro
+    # The S3 API only starts after the master elects itself leader and the filer connects (~20s).
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:8333/healthz"]
+      interval: 3s
+      timeout: 3s
+      retries: 30
+      start_period: 10s
 
   phoenix:
     image: arizephoenix/phoenix:version-11.0.0
@@ -38,6 +74,31 @@ services:
     volumes: [phoenix-data:/mnt/data]
     environment:
       PHOENIX_WORKING_DIR: /mnt/data
+
+  # One-shot: Alembic schema + Procrastinate schema (migration 0003) before api/worker start.
+  migrate:
+    <<: *app
+    command: ["alembic", "upgrade", "head"]
+    restart: "no"
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  api:
+    <<: *app
+    ports: ["8000:8000"]
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://localhost:8000/health"]
+      interval: 5s
+      timeout: 3s
+      retries: 12
+      start_period: 10s
+
+  # Docling needs ~1 GB per PDF and a full 10-K more: give the Docker VM at least 6 GB (README).
+  worker:
+    <<: *app
+    command: ["python", "-m", "finrag.jobs.worker"]
+    mem_limit: ${FINRAG_WORKER_MEM_LIMIT:-3g}
 
 volumes:
   postgres-data:

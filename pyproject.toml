@@ -7,8 +7,20 @@ authors = [
 ]
 requires-python = ">=3.12"
 dependencies = [
+    "alembic>=1.20.1",
+    "boto3>=1.44.5",
+    "docling>=2.150.1",
     "fastapi>=0.164.0",
+    "fastembed>=0.9.1",
+    "httpx>=0.28.1",
+    "procrastinate[psycopg]>=3.11.0",
+    "psycopg[binary]>=3.3.9",
     "pydantic-settings>=2.16.3",
+    "python-multipart>=0.0.34",
+    "qdrant-client>=1.20.0",
+    "sqlalchemy>=2.1.9",
+    "torch>=2.15.0",  # transitive via Docling; direct so the CPU index below applies
+    "torchvision>=0.29.2",
     "uvicorn[standard]>=0.54.0",
 ]
 
@@ -18,15 +30,29 @@ build-backend = "uv_build"
 
 [dependency-groups]
 dev = [
+    "boto3-stubs[s3]>=1.44.5",
     "httpx>=0.28.1",
     "mypy>=2.4.1",
     "pre-commit>=4.7.0",
     "pytest>=9.2.0",
+    "reportlab>=5.1.0",
     "ruff>=0.17.5",
 ]
 
+# Linux (Docker image, CI) gets CPU-only torch: the default PyPI wheel drags in ~3 GB of CUDA
+# libraries that Docling does not need here. macOS wheels from PyPI are already CPU/MPS.
+[tool.uv.sources]
+torch = [{ index = "pytorch-cpu", marker = "sys_platform == 'linux'" }]
+torchvision = [{ index = "pytorch-cpu", marker = "sys_platform == 'linux'" }]
+
+[[tool.uv.index]]
+name = "pytorch-cpu"
+url = "https://download.pytorch.org/whl/cpu"
+explicit = true
+
 [tool.ruff]
 line-length = 100
+extend-exclude = [".claude"]  # agent worktrees live inside the repo directory
 target-version = "py312"
 
 [tool.ruff.lint]
