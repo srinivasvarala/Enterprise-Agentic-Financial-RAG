@@ -69,12 +69,17 @@ _Avoid_: Response, completion, output
 A link from a statement in an answer to the chunk that supports it, resolving to document, page, section path and quoted span.
 _Avoid_: Reference, source, footnote
 
+**Citation Marker**:
+The bracketed number, such as `[2]`, in an answer's text that points to one Citation.
+_Avoid_: Footnote, reference number
+
 **Quoted Span**:
 The exact text inside a cited chunk that supports a statement.
 _Avoid_: Highlight, excerpt
 
 **Refusal**:
 An answer that declines to answer because the evidence is insufficient or the question falls outside policy.
+A refusal has exactly one reason: _insufficient evidence_ (nothing relevant was retrieved), _unverifiable_ (an answer was drafted but its citations could not be verified), _out of policy_ (investment advice or a blocked question), or _needs calculation_ (the question requires figures to be computed, which is not done).
 _Avoid_: Fallback, error, "I don't know"
 
 **Investment Advice**:
