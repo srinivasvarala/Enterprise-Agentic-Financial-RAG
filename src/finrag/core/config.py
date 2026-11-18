@@ -44,6 +44,9 @@ class Settings(BaseSettings):
     # Uploads
     max_upload_bytes: int = 50 * 1024 * 1024
 
+    # PDF parsing (Docling). SEC filings are born-digital, so OCR is off.
+    pdf_ocr_enabled: bool = False
+
     # Chunking and ingestion
     chunk_target_tokens: int = 500  # soft: text chunks close at a paragraph boundary past this
     chunk_max_tokens: int = 800  # hard ceiling for a text chunk

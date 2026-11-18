@@ -44,10 +44,14 @@ class Container:
         )
 
 
-def build_parsers() -> Mapping[str, Parser]:
+def build_parsers(settings: Settings) -> Mapping[str, Parser]:
+    from finrag.ingestion.docling_parser import DoclingParser  # Docling itself loads lazily
     from finrag.ingestion.text_parser import TextParser
 
-    return {"text/plain": TextParser()}  # PDF parser arrives with the Docling ticket
+    return {
+        "text/plain": TextParser(),
+        "application/pdf": DoclingParser(ocr_enabled=settings.pdf_ocr_enabled),
+    }
 
 
 def build_indexing_adapters() -> tuple[Embedder, SparseEncoder, VectorStore]:
@@ -87,7 +91,7 @@ def _build(settings: Settings, job_queue: JobQueue) -> Container:
         session_factory=build_session_factory(build_engine(settings)),
         blob_store=blob_store,
         job_queue=job_queue,
-        parsers=build_parsers(),
+        parsers=build_parsers(settings),
         embedder=embedder,
         sparse_encoder=sparse_encoder,
         vector_store=vector_store,
