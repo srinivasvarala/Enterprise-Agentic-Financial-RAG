@@ -20,7 +20,7 @@ from finrag.core.config import Settings
 from finrag.core.domain import DocumentStatus, IngestionJob, SparseVector, VectorPoint
 from finrag.core.errors import ParseError, TransientError
 from finrag.core.interfaces import BlobStore, Embedder, Parser, SparseEncoder, VectorStore
-from finrag.ingestion.chunking import ChunkDraft, chunk_document
+from finrag.ingestion.chunking import ChunkDraft, ChunkingConfig, chunk_document
 from finrag.ingestion.parsed import ParsedDocument
 from finrag.storage.models import Chunk, Document, DocumentVersion
 
@@ -70,7 +70,7 @@ class IngestionPipeline:
 
             stage = DocumentStatus.CHUNKING
             self._set_status(job, stage, ctx)
-            drafts = chunk_document(parsed, self._settings.chunk_max_tokens)
+            drafts = chunk_document(parsed, self._chunking_config())
             if not drafts:
                 raise ParseError("The document contains no extractable text.")
             self._persist_chunks(job, collection_id, drafts)
@@ -102,6 +102,14 @@ class IngestionPipeline:
             raise ParseError(f"No parser is available for media type {media_type}.")
         data = self._retrying(lambda: self._blobs.get(blob_key), ctx, "blob get")
         return parser.parse(data)
+
+    def _chunking_config(self) -> ChunkingConfig:
+        return ChunkingConfig(
+            target_tokens=self._settings.chunk_target_tokens,
+            max_tokens=self._settings.chunk_max_tokens,
+            overlap_tokens=self._settings.chunk_overlap_tokens,
+            table_max_tokens=self._settings.table_max_tokens,
+        )
 
     def _persist_chunks(
         self, job: IngestionJob, collection_id: UUID, drafts: Sequence[ChunkDraft]
