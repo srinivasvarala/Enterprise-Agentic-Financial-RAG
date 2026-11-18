@@ -14,6 +14,7 @@ Rules:
 Token counts are approximate (see `count_tokens`), the single place a real tokenizer plugs in.
 """
 
+import itertools
 import re
 from dataclasses import dataclass
 
@@ -199,7 +200,7 @@ def _overlap_tail(chunk: list[_Unit], overlap_tokens: int) -> list[_Unit]:
 
 def _join(units: list[_Unit]) -> str:
     parts = [units[0].text]
-    for prev, unit in zip(units, units[1:], strict=False):
+    for prev, unit in itertools.pairwise(units):
         parts.append("\n\n" if unit.paragraph != prev.paragraph else " ")
         parts.append(unit.text)
     return "".join(parts)
