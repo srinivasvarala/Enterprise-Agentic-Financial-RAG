@@ -73,8 +73,8 @@ The `answer` event carries `text`, `citations` (document, pages, section path, q
 `unverifiable` or `out_of_policy`. Text is sent only after every citation has been verified
 (ADR-0008). If answering fails once the stream has started, a single `error` event ends it.
 
-Answers come from Claude: set `FINRAG_ANTHROPIC_API_KEY` in `.env`. The first question downloads
-the bge reranker model. To exercise the endpoint offline, use
+Answers come from Claude: set `FINRAG_ANTHROPIC_API_KEY` in `.env`. The bge reranker is baked into
+the image at build time (the containers run offline); `make check-image` proves it loads. To exercise the endpoint offline, use
 `FINRAG_GENERATOR_BACKEND=extractive FINRAG_RERANKER_BACKEND=overlap` (it quotes the best-matching
 chunk; not a real model).
 
