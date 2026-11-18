@@ -18,7 +18,9 @@ class BlobStore(Protocol):
 class JobQueue(Protocol):
     """Enqueues background work. Execution happens in a separate worker process."""
 
-    def enqueue_ingestion(self, job: IngestionJob) -> None: ...
+    def enqueue_ingestion(self, job: IngestionJob) -> bool:
+        """Enqueue the job; False if one for the same Document Version is already waiting."""
+        ...
 
 
 class Parser(Protocol):

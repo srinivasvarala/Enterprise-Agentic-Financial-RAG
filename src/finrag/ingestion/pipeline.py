@@ -68,6 +68,10 @@ class IngestionPipeline:
         self._settings = settings
         self._sleep = sleep
 
+    def startup_check(self) -> None:
+        """Worker startup: fail fast if the vector collection mismatches the embedder dimension."""
+        self._vectors.ensure_collection(self._embedder.dimension)
+
     def run(self, job: IngestionJob, job_id: str | None = None) -> None:
         """Ingest one Document Version. Terminal outcome is recorded on the Document."""
         ctx = {

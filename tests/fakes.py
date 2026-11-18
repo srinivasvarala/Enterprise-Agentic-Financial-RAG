@@ -22,8 +22,9 @@ class InMemoryJobQueue:
     def __init__(self) -> None:
         self.jobs: list[IngestionJob] = []
 
-    def enqueue_ingestion(self, job: IngestionJob) -> None:
+    def enqueue_ingestion(self, job: IngestionJob) -> bool:
         self.jobs.append(job)
+        return True
 
 
 class FlakyEmbedder(HashEmbedder):

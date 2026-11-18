@@ -9,6 +9,7 @@ making design changes. Never contradict an accepted ADR silently — propose a s
 make install        # uv sync + pre-commit install
 make up / make down # docker compose: postgres, qdrant, seaweedfs, phoenix
 make migrate        # apply Alembic migrations + Procrastinate schema (needs `make up`)
+make reconcile      # re-defer ingestion jobs of Documents stuck by a crash (needs `make up`)
 make dev            # run API with reload on :8000
 make lint           # ruff check + ruff format --check + mypy
 make test           # unit tests (no network, no docker)

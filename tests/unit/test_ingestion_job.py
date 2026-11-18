@@ -310,3 +310,11 @@ def test_vector_store_rejects_calls_without_a_tenant(env: Env) -> None:
         env.vectors.upsert(None, [])  # type: ignore[arg-type]
     with pytest.raises(TenantRequiredError):
         env.vectors.delete_version(None, uuid4())  # type: ignore[arg-type]
+
+
+def test_startup_check_prepares_the_vector_collection_for_the_embedder_dimension(env: Env) -> None:
+    assert env.vectors.dimension is None
+
+    env.pipeline().startup_check()
+
+    assert env.vectors.dimension == env.embedder.dimension

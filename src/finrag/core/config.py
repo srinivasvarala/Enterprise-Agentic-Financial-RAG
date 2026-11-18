@@ -76,6 +76,10 @@ class Settings(BaseSettings):
     embedding_batch_size: int = 64
     ingest_max_attempts: int = 3  # per stage, for transient provider errors
     ingest_retry_base_seconds: float = 2.0  # exponential backoff: base * 2**(attempt - 1)
+    # A Document not queued/terminal and untouched this long is presumed orphaned (worker crash,
+    # lost enqueue) and its ingestion job is re-deferred by the reconciler. Must exceed the
+    # longest single stage (Docling on a large 10-K).
+    stuck_document_seconds: int = 900
 
     # OpenTelemetry (Phoenix locally)
     otel_exporter_endpoint: str = "http://localhost:6006/v1/traces"

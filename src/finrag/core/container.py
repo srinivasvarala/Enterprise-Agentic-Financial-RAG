@@ -104,7 +104,7 @@ def build_ingestion_pipeline(settings: Settings) -> IngestionPipeline:
 
 
 class _NoQueue:
-    def enqueue_ingestion(self, job: IngestionJob) -> None:
+    def enqueue_ingestion(self, job: IngestionJob) -> bool:
         raise RuntimeError("this container has no job queue")
 
 
