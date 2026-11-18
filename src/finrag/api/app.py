@@ -3,7 +3,7 @@
 from fastapi import FastAPI
 
 from finrag import __version__
-from finrag.api.routes import documents, health
+from finrag.api.routes import documents, health, query
 from finrag.core.config import Settings, get_settings
 from finrag.core.container import Container
 from finrag.core.logging import configure_logging
@@ -18,6 +18,7 @@ def create_app(settings: Settings | None = None, container: Container | None = N
     app.state.container = container
     app.include_router(health.router)
     app.include_router(documents.router)
+    app.include_router(query.router)
     return app
 
 

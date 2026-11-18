@@ -66,8 +66,14 @@ Delete removes blob, rows and vectors.
 5. Retrieval rail strips instruction-like content from chunks (documents are untrusted).
 6. Generate with Claude Sonnet; structured output `{answer, citations[]}`. Every factual sentence
    cites `[n]`; each citation resolves to document, page(s), section path and a quoted span.
-7. Validate: every `[n]` maps to a retrieved chunk; flag uncited sentences; refuse if evidence is insufficient.
+7. Validate (all-or-nothing, ADR-0008): every `[n]` maps to a retrieved chunk, every Quoted Span is
+   verbatim in its chunk, every sentence is cited, every number is verbatim in a cited chunk.
+   Refuse (`unverifiable`) otherwise; refuse (`insufficient_evidence`) without calling the model
+   when nothing relevant was retrieved.
 8. Output rails (groundedness self-check, advice policy).
+9. Stream over SSE: `progress` (retrieving, generating, validating), then one `answer` event with
+   the text, Citations and `refusal_reason`; an `error` event if answering fails mid-stream. Text
+   is never sent before it is validated.
 
 All k-values and thresholds are configuration, tuned via the eval harness.
 

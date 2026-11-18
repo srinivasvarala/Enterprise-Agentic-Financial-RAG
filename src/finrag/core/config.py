@@ -73,6 +73,9 @@ class Settings(BaseSettings):
     default_tenant_id: UUID = UUID("00000000-0000-4000-8000-000000000001")
     default_collection_id: UUID = UUID("00000000-0000-4000-8000-000000000002")
 
+    # Questions
+    max_question_chars: int = 2000
+
     # Uploads
     max_upload_bytes: int = 50 * 1024 * 1024
 

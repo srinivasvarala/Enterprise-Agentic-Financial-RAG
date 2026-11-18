@@ -6,6 +6,7 @@ from fastapi import Depends, Request
 
 from finrag.core.container import Container, build_container
 from finrag.core.domain import Principal
+from finrag.generation.service import AnswerService
 from finrag.ingestion.service import DocumentService
 
 
@@ -32,5 +33,12 @@ def get_document_service(
     return container.document_service()
 
 
+def get_answer_service(
+    container: Annotated[Container, Depends(get_container)],
+) -> AnswerService:
+    return container.answer_service()
+
+
 PrincipalDep = Annotated[Principal, Depends(current_principal)]
 DocumentServiceDep = Annotated[DocumentService, Depends(get_document_service)]
+AnswerServiceDep = Annotated[AnswerService, Depends(get_answer_service)]
