@@ -1,5 +1,5 @@
 .DEFAULT_GOAL := help
-.PHONY: help install build up down logs migrate reconcile dev lint fmt test test-int ci eval
+.PHONY: help install build up down logs migrate reconcile dev lint fmt test test-int ci eval check-image
 
 help: ## list targets
 	@grep -hE '^[a-z-]+:.*## ' $(MAKEFILE_LIST) | awk -F':.*## ' '{printf "  %-10s %s\n", $$1, $$2}'
@@ -10,6 +10,9 @@ install: ## uv sync + install the pre-commit hooks (shared by all git worktrees)
 
 build: ## build the app image
 	docker compose build
+
+check-image: ## prove the built image loads every model offline (run `make build` first)
+	docker run --rm -i finrag-app:local python - < infra/docker/check_offline_models.py
 
 up: ## build and start the whole stack (needs FINRAG_VOYAGE_API_KEY, or FINRAG_EMBEDDER_BACKEND=hash FINRAG_SPARSE_BACKEND=hash)
 	docker compose up -d --build --wait

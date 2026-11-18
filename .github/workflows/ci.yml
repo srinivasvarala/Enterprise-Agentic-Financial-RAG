@@ -53,5 +53,10 @@ jobs:
         with:
           context: .
           push: false
+          load: true
+          tags: finrag-app:ci
           cache-from: type=gha
           cache-to: type=gha,mode=max
+      # Containers run with HF_HUB_OFFLINE=1: a model missing from the image must fail here.
+      - name: Image loads its models offline
+        run: docker run --rm -i finrag-app:ci python - < infra/docker/check_offline_models.py
