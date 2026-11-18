@@ -1,9 +1,11 @@
 """SQLAlchemy models. Every row below Tenant carries tenant_id."""
 
 from datetime import UTC, datetime
+from typing import Any
 from uuid import UUID, uuid4
 
 from sqlalchemy import (
+    JSON,
     BigInteger,
     DateTime,
     ForeignKey,
@@ -75,4 +77,29 @@ class DocumentVersion(Base):
     content_sha256: Mapped[str] = mapped_column(String(64))
     blob_key: Mapped[str] = mapped_column(String(500))
     size_bytes: Mapped[int] = mapped_column(BigInteger)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
+
+
+class Chunk(Base):
+    """One citable piece of a Document Version. `id` is uuid5(document_version_id, ordinal)."""
+
+    __tablename__ = "chunk"
+    __table_args__ = (
+        UniqueConstraint("document_version_id", "ordinal", name="uq_chunk_version_ordinal"),
+        Index("ix_chunk_tenant_document_ordinal", "tenant_id", "document_id", "ordinal"),
+    )
+
+    id: Mapped[UUID] = mapped_column(Uuid, primary_key=True)
+    tenant_id: Mapped[UUID] = mapped_column(ForeignKey("tenant.id"))
+    collection_id: Mapped[UUID] = mapped_column(ForeignKey("collection.id"))
+    document_id: Mapped[UUID] = mapped_column(ForeignKey("document.id"))
+    document_version_id: Mapped[UUID] = mapped_column(ForeignKey("document_version.id"))
+    ordinal: Mapped[int] = mapped_column(Integer)
+    kind: Mapped[str] = mapped_column(String(20))
+    text: Mapped[str] = mapped_column(Text)
+    section_path: Mapped[list[str]] = mapped_column(JSON)
+    page_start: Mapped[int] = mapped_column(Integer)
+    page_end: Mapped[int] = mapped_column(Integer)
+    token_count: Mapped[int] = mapped_column(Integer)
+    bounding_boxes: Mapped[list[dict[str, Any]] | None] = mapped_column(JSON, default=None)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)

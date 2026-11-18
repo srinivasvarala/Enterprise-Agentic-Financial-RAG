@@ -5,14 +5,14 @@ from datetime import UTC, datetime
 from uuid import UUID, uuid4
 
 from pydantic import BaseModel, ConfigDict, field_validator
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, sessionmaker
 
 from finrag.core.config import Settings
 from finrag.core.domain import IngestionJob, Principal
 from finrag.core.interfaces import BlobStore, JobQueue
-from finrag.storage.models import Document, DocumentVersion
+from finrag.storage.models import Chunk, Document, DocumentVersion
 
 SUPPORTED_MEDIA_TYPES = frozenset({"application/pdf", "text/plain"})
 
@@ -48,6 +48,29 @@ class DocumentView(BaseModel):
     def _utc(cls, value: datetime) -> datetime:
         # Timestamps are stored in UTC; some drivers (SQLite) return them naive.
         return value.replace(tzinfo=UTC) if value.tzinfo is None else value
+
+
+class ChunkView(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: UUID
+    collection_id: UUID
+    document_id: UUID
+    document_version_id: UUID
+    ordinal: int
+    kind: str
+    text: str
+    section_path: list[str]
+    page_start: int
+    page_end: int
+    token_count: int
+
+
+class ChunkPage(BaseModel):
+    items: list[ChunkView]
+    total: int
+    limit: int
+    offset: int
 
 
 class DocumentService:
@@ -142,6 +165,30 @@ class DocumentService:
                 )
             ).one_or_none()
             return None if row is None else DocumentView.model_validate(row)
+
+    def list_chunks(
+        self, principal: Principal, document_id: UUID, limit: int, offset: int
+    ) -> ChunkPage | None:
+        """A page of Chunks in ordinal order; None if the Document is absent or not the tenant's."""
+        with self._session_factory() as session:
+            owned = session.scalars(
+                select(Document.id).where(
+                    Document.id == document_id, Document.tenant_id == principal.tenant_id
+                )
+            ).one_or_none()
+            if owned is None:
+                return None
+            where = (Chunk.tenant_id == principal.tenant_id, Chunk.document_id == document_id)
+            total = session.scalar(select(func.count()).select_from(Chunk).where(*where)) or 0
+            rows = session.scalars(
+                select(Chunk).where(*where).order_by(Chunk.ordinal).limit(limit).offset(offset)
+            )
+            return ChunkPage(
+                items=[ChunkView.model_validate(r) for r in rows],
+                total=total,
+                limit=limit,
+                offset=offset,
+            )
 
     @staticmethod
     def _find_by_hash(session: Session, principal: Principal, sha256: str) -> Document | None:

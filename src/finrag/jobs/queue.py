@@ -1,26 +1,63 @@
 """Procrastinate job queue: app, tasks and the JobQueue adapter."""
 
+from collections.abc import Callable
 from contextlib import AbstractContextManager
+from uuid import UUID
 
 import procrastinate
-from procrastinate import SyncPsycopgConnector
+from procrastinate import JobContext, SyncPsycopgConnector
+from procrastinate.connector import BaseConnector
 
 from finrag.core.config import Settings
 from finrag.core.domain import IngestionJob
+from finrag.core.logging import configure_logging
+from finrag.ingestion.pipeline import IngestionPipeline
 from finrag.storage.db import psycopg_dsn
 
 INGEST_TASK = "finrag.ingest_document_version"
 
 
-def build_app(settings: Settings) -> procrastinate.App:
-    app = procrastinate.App(connector=SyncPsycopgConnector(conninfo=psycopg_dsn(settings)))
+def build_app(
+    settings: Settings,
+    *,
+    connector: BaseConnector | None = None,
+    pipeline_provider: Callable[[], IngestionPipeline] | None = None,
+) -> procrastinate.App:
+    """The Procrastinate app. Tests inject an in-memory connector and a ready-made pipeline."""
+    app = procrastinate.App(
+        connector=connector or SyncPsycopgConnector(conninfo=psycopg_dsn(settings))
+    )
+    provider = pipeline_provider or _lazy_pipeline(settings)
 
-    @app.task(name=INGEST_TASK)
-    def ingest_document_version(tenant_id: str, document_id: str, document_version_id: str) -> None:
-        # Implemented by a later M1 ticket; the worker does not run it yet.
-        raise NotImplementedError("ingestion is not implemented yet")
+    @app.task(name=INGEST_TASK, pass_context=True)
+    def ingest_document_version(
+        context: JobContext, tenant_id: str, document_id: str, document_version_id: str
+    ) -> None:
+        provider().run(
+            IngestionJob(
+                tenant_id=UUID(tenant_id),
+                document_id=UUID(document_id),
+                document_version_id=UUID(document_version_id),
+            ),
+            job_id=str(context.job.id),
+        )
 
     return app
+
+
+def _lazy_pipeline(settings: Settings) -> Callable[[], IngestionPipeline]:
+    """Builds the worker's pipeline on first use and reuses it."""
+    cache: list[IngestionPipeline] = []
+
+    def provide() -> IngestionPipeline:
+        if not cache:
+            from finrag.core.container import build_ingestion_pipeline
+
+            configure_logging(settings.log_level)
+            cache.append(build_ingestion_pipeline(settings))
+        return cache[0]
+
+    return provide
 
 
 class ProcrastinateJobQueue:
