@@ -1,6 +1,6 @@
 # ADR-0003: DeepEval for generation evals, own code for retrieval metrics
 
-**Status:** Accepted (2026-11-18)
+**Status:** Accepted (2026-11-18). Fixtures, gold labels and metric set amended by ADR-0010.
 
 ## Context
 Every retrieval/generation change must be measured. Candidates: Ragas, DeepEval, custom harness.

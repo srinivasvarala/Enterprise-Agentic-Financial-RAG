@@ -92,8 +92,16 @@ _Avoid_: Filter, guard, moderation
 ## Evaluation
 
 **Golden Set**:
-The curated questions, with known answers and the chunks or pages that support them, against which quality is measured.
+The curated questions, each with a known answer and the Gold Spans that support it, against which quality is measured. Some questions are deliberately unanswerable from the documents; the right outcome for those is a Refusal.
 _Avoid_: Test set, benchmark, ground truth
+
+**Gold Span**:
+The exact text, on a stated page of a document, that supports a Golden Set question's answer. Stated as document, page range and quoted text, never as a chunk, so it survives changes to chunking.
+_Avoid_: Gold chunk, label, annotation
+
+**Hit**:
+A retrieved chunk whose text contains a Gold Span.
+_Avoid_: Match, relevant result
 
 **Baseline**:
 The recorded evaluation results that later changes are compared against.
