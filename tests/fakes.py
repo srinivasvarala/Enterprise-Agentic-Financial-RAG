@@ -17,9 +17,6 @@ class InMemoryBlobStore:
     def get(self, key: str) -> bytes:
         return self.objects[key]
 
-    def exists(self, key: str) -> bool:
-        return key in self.objects
-
 
 class InMemoryJobQueue:
     def __init__(self) -> None:

@@ -19,7 +19,6 @@ from finrag.indexing.qdrant_store import (
     point_to_struct,
     record_to_point,
     tenant_filter,
-    to_transient,
 )
 from finrag.indexing.voyage import VoyageEmbedder
 
@@ -30,7 +29,15 @@ def voyage(handler, batch_size: int = 2) -> VoyageEmbedder:  # type: ignore[no-u
         transport=httpx.MockTransport(handler),
         headers={"Authorization": "Bearer k"},
     )
-    return VoyageEmbedder("k", "voyage-finance-2", 3, batch_size=batch_size, client=client)
+    return VoyageEmbedder(
+        "k",
+        "voyage-finance-2",
+        3,
+        base_url="http://voyage.test/v1",
+        batch_size=batch_size,
+        timeout_seconds=1.0,
+        client=client,
+    )
 
 
 def ok(request: httpx.Request) -> httpx.Response:
@@ -170,15 +177,31 @@ def test_store_rejects_tenantless_calls_before_touching_the_network() -> None:
         store.upsert(uuid4(), [make_point()])
 
 
+class _FailingClient:
+    def __init__(self, error: Exception) -> None:
+        self.error = error
+
+    def delete(self, *args: object, **kwargs: object) -> None:
+        raise self.error
+
+
+def _delete_with(error: Exception) -> None:
+    store = QdrantVectorStore(client=_FailingClient(error), collection="x")  # type: ignore[arg-type]
+    store.delete_version(uuid4(), uuid4())
+
+
 def test_qdrant_failures_map_to_transient_only_when_retryable() -> None:
     headers = httpx.Headers()
-    assert isinstance(to_transient(ResponseHandlingException(Exception("timeout"))), TransientError)
-    assert isinstance(
-        to_transient(UnexpectedResponse(429, "Too Many", b"", headers)), TransientError
-    )
-    assert isinstance(to_transient(UnexpectedResponse(503, "Down", b"", headers)), TransientError)
+    for retryable in (
+        ResponseHandlingException(Exception("timeout")),
+        UnexpectedResponse(429, "Too Many", b"", headers),
+        UnexpectedResponse(503, "Down", b"", headers),
+    ):
+        with pytest.raises(TransientError):
+            _delete_with(retryable)
     bad_request = UnexpectedResponse(400, "Bad", b"", headers)
-    assert to_transient(bad_request) is bad_request
+    with pytest.raises(UnexpectedResponse):
+        _delete_with(bad_request)
 
 
 def test_container_picks_adapters_from_settings() -> None:

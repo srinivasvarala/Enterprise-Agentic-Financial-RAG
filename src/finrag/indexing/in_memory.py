@@ -1,7 +1,8 @@
 """Dependency-free stand-ins for the indexing Protocols.
 
-Used by unit tests and wired in the composition root until the real Voyage / FastEmbed / Qdrant
-adapters land. They keep everything in process memory, so nothing survives a restart.
+Selected by the `*_backend` settings (offline smoke runs) and used by unit tests, so no API key,
+model download or Qdrant server is needed. They keep everything in process memory, so nothing
+survives a restart.
 """
 
 import hashlib
@@ -10,7 +11,7 @@ from collections.abc import Sequence
 from uuid import UUID
 
 from finrag.core.domain import SparseVector, VectorPoint
-from finrag.core.errors import TenantRequiredError
+from finrag.core.tenancy import require_points_of_tenant, require_tenant
 
 
 def _tokens(text: str) -> list[str]:
@@ -68,14 +69,13 @@ class InMemoryVectorStore:
         self.dimension = dimension
 
     def upsert(self, tenant_id: UUID, points: Sequence[VectorPoint]) -> None:
-        _require(tenant_id)
+        require_tenant(tenant_id)
+        require_points_of_tenant(tenant_id, points)
         for point in points:
-            if point.tenant_id != tenant_id:
-                raise TenantRequiredError("point tenant does not match the write's tenant")
             self._points[(tenant_id, point.id)] = point
 
     def delete_version(self, tenant_id: UUID, document_version_id: UUID) -> None:
-        _require(tenant_id)
+        require_tenant(tenant_id)
         for key in [
             k
             for k, p in self._points.items()
@@ -84,14 +84,9 @@ class InMemoryVectorStore:
             del self._points[key]
 
     def get_version_points(self, tenant_id: UUID, document_version_id: UUID) -> list[VectorPoint]:
-        _require(tenant_id)
+        require_tenant(tenant_id)
         return [
             p
             for (t, _), p in self._points.items()
             if t == tenant_id and p.document_version_id == document_version_id
         ]
-
-
-def _require(tenant_id: UUID | None) -> None:
-    if tenant_id is None:
-        raise TenantRequiredError("tenant_id is required on every vector store call")

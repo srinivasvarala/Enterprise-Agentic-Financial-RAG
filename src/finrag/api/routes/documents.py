@@ -8,9 +8,9 @@ from fastapi import APIRouter, File, HTTPException, Query, Response, UploadFile
 from finrag.api.deps import DocumentServiceDep, PrincipalDep
 from finrag.ingestion.service import (
     ChunkPage,
+    DocumentTooLargeError,
     DocumentView,
-    EmptyFileError,
-    FileTooLargeError,
+    EmptyDocumentError,
     UnsupportedMediaTypeError,
 )
 
@@ -32,10 +32,10 @@ def upload_document(
         )
     except UnsupportedMediaTypeError as exc:
         raise HTTPException(415, f"Unsupported media type: {exc}. Use PDF or plain text.") from exc
-    except FileTooLargeError as exc:
-        raise HTTPException(413, f"File exceeds the {max_bytes} byte upload limit.") from exc
-    except EmptyFileError as exc:
-        raise HTTPException(422, "The uploaded file is empty.") from exc
+    except DocumentTooLargeError as exc:
+        raise HTTPException(413, f"Document exceeds the {max_bytes} byte upload limit.") from exc
+    except EmptyDocumentError as exc:
+        raise HTTPException(422, "The uploaded document is empty.") from exc
     if not created:
         response.status_code = 200
     return document

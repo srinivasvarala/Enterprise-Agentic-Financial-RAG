@@ -40,10 +40,3 @@ class S3BlobStore:
 
     def get(self, key: str) -> bytes:
         return self._client.get_object(Bucket=self._bucket, Key=key)["Body"].read()
-
-    def exists(self, key: str) -> bool:
-        try:
-            self._client.head_object(Bucket=self._bucket, Key=key)
-        except ClientError:
-            return False
-        return True

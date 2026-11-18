@@ -19,8 +19,7 @@ import logging
 import re
 from typing import TYPE_CHECKING, Any
 
-from finrag.core.errors import ParseError
-from finrag.ingestion.parsed import (
+from finrag.core.domain import (
     Block,
     BoundingBox,
     HeadingBlock,
@@ -28,6 +27,7 @@ from finrag.ingestion.parsed import (
     ParsedDocument,
     TableBlock,
 )
+from finrag.core.errors import ParseError
 
 if TYPE_CHECKING:
     from docling.document_converter import DocumentConverter
@@ -59,7 +59,9 @@ class DoclingParser:
             raise ParseError(f"The PDF could not be read: {exc}") from exc
         if result.status not in (ConversionStatus.SUCCESS, ConversionStatus.PARTIAL_SUCCESS):
             errors = "; ".join(e.error_message for e in result.errors) or "unknown error"
-            raise ParseError(f"The PDF could not be read (corrupt or unsupported file): {errors}")
+            raise ParseError(
+                f"The PDF could not be read (corrupt or unsupported document): {errors}"
+            )
         blocks = _map_document(result.document)
         if not blocks:
             raise ParseError("The PDF contains no extractable text.")

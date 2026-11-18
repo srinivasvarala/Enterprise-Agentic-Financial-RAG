@@ -12,9 +12,9 @@ import pytest
 from harness import Env
 from sqlalchemy import select
 
+from finrag.core.domain import ParsedDocument
 from finrag.core.errors import ParseError
 from finrag.ingestion.docling_parser import DoclingParser
-from finrag.ingestion.parsed import ParsedDocument
 from finrag.storage.models import Chunk
 
 pytestmark = pytest.mark.integration

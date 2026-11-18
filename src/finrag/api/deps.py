@@ -29,9 +29,7 @@ def current_principal(request: Request) -> Principal:
 def get_document_service(
     container: Annotated[Container, Depends(get_container)],
 ) -> DocumentService:
-    return DocumentService(
-        container.session_factory, container.blob_store, container.job_queue, container.settings
-    )
+    return container.document_service()
 
 
 PrincipalDep = Annotated[Principal, Depends(current_principal)]

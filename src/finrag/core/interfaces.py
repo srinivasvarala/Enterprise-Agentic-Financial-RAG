@@ -4,18 +4,15 @@ from collections.abc import Sequence
 from typing import Protocol
 from uuid import UUID
 
-from finrag.core.domain import IngestionJob, SparseVector, VectorPoint
-from finrag.ingestion.parsed import ParsedDocument
+from finrag.core.domain import IngestionJob, ParsedDocument, SparseVector, VectorPoint
 
 
 class BlobStore(Protocol):
-    """Stores original files unchanged."""
+    """Stores original documents unchanged."""
 
     def put(self, key: str, data: bytes, content_type: str) -> None: ...
 
     def get(self, key: str) -> bytes: ...
-
-    def exists(self, key: str) -> bool: ...
 
 
 class JobQueue(Protocol):
@@ -25,9 +22,9 @@ class JobQueue(Protocol):
 
 
 class Parser(Protocol):
-    """Turns one file format into the parser-independent ParsedDocument.
+    """Turns one document format into the parser-independent ParsedDocument.
 
-    Raises finrag.core.errors.ParseError when the file cannot be understood.
+    Raises finrag.core.errors.ParseError when the document cannot be understood.
     """
 
     def parse(self, data: bytes) -> ParsedDocument: ...
