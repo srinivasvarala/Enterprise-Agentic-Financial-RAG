@@ -6,17 +6,75 @@ Evidence-based question answering over financial documents (SEC filings first) u
 
 - Design: [`ARCHITECTURE.md`](ARCHITECTURE.md)
 - Decisions: [`docs/adr/`](docs/adr/)
-- Status: **M0 — skeleton**
+- Status: **M1: ingestion** (upload, parse, chunk, embed, index)
 
 ## Quickstart
 
 Requires [uv](https://docs.astral.sh/uv/) and Docker.
 
 ```bash
-make install   # deps + pre-commit hooks
-make up        # postgres, qdrant, seaweedfs (S3), phoenix
-make dev       # API on http://localhost:8000  →  GET /health
+make install   # deps + pre-commit hooks (for development)
+make up        # builds the app image; starts postgres, qdrant, seaweedfs, phoenix, migrate, api, worker
 make lint test
+```
+
+`make up` blocks until every service is healthy. The first build downloads the Python wheels and
+~505 MB of Docling models plus the FastEmbed BM25 files, all baked into the image (containers run
+with `HF_HUB_OFFLINE=1`, so a job never downloads models); later builds are cached.
+`make logs` tails the api and worker, `make down` stops the stack.
+
+### Embeddings: Voyage key or offline mode
+
+Dense embeddings come from Voyage (ADR-0005). Put your key in `.env` (or the host environment):
+
+```bash
+echo 'FINRAG_VOYAGE_API_KEY=your-key' >> .env
+make up
+```
+
+Without a key the api and worker refuse to start. To try the stack without one, use the offline
+hash backends (deterministic, not semantically meaningful; good for checking the plumbing):
+
+```bash
+FINRAG_EMBEDDER_BACKEND=hash FINRAG_SPARSE_BACKEND=hash make up
+```
+
+### Ingest a document
+
+```bash
+# upload a PDF or plain text file: 202 with the Document and its id
+curl -F file=@filing.pdf localhost:8000/documents
+
+# poll until "status" is "ready" (it passes through queued and processing; "failed" carries an error)
+curl localhost:8000/documents/<id>
+
+# the Chunks that were indexed (limit/offset paging)
+curl 'localhost:8000/documents/<id>/chunks?limit=5'
+```
+
+Chunks are indexed in the Qdrant collection `finrag_chunks`. To count the points for a Document:
+
+```bash
+curl -s localhost:6333/collections/finrag_chunks/points/count \
+  -H 'content-type: application/json' \
+  -d '{"exact": true, "filter": {"must": [{"key": "document_id", "match": {"value": "<id>"}}]}}'
+```
+
+### Memory
+
+The worker runs Docling (layout and table models) on the CPU: roughly 1 GB for a short PDF and more
+for a full 10-K, one document at a time. Docker Desktop's default VM can be too small. Raise it
+under Settings > Resources > Memory to **6 GB or more**. The worker container is capped at 3 GB
+(override with `FINRAG_WORKER_MEM_LIMIT=4g`); if a PDF job dies with exit code 137 in `make logs`,
+the cap or the VM ran out of memory. Plain-text uploads need very little.
+
+### Running the API outside Docker
+
+```bash
+docker compose up -d --wait postgres qdrant seaweedfs phoenix
+make migrate
+make dev                              # API on http://localhost:8000
+uv run python -m finrag.jobs.worker   # worker, in a second terminal
 ```
 
 | Service | URL |

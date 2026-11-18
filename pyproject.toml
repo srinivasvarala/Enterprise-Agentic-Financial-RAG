@@ -19,6 +19,8 @@ dependencies = [
     "python-multipart>=0.0.34",
     "qdrant-client>=1.20.0",
     "sqlalchemy>=2.1.9",
+    "torch>=2.15.0",  # transitive via Docling; direct so the CPU index below applies
+    "torchvision>=0.29.2",
     "uvicorn[standard]>=0.54.0",
 ]
 
@@ -36,6 +38,17 @@ dev = [
     "reportlab>=5.1.0",
     "ruff>=0.17.5",
 ]
+
+# Linux (Docker image, CI) gets CPU-only torch: the default PyPI wheel drags in ~3 GB of CUDA
+# libraries that Docling does not need here. macOS wheels from PyPI are already CPU/MPS.
+[tool.uv.sources]
+torch = [{ index = "pytorch-cpu", marker = "sys_platform == 'linux'" }]
+torchvision = [{ index = "pytorch-cpu", marker = "sys_platform == 'linux'" }]
+
+[[tool.uv.index]]
+name = "pytorch-cpu"
+url = "https://download.pytorch.org/whl/cpu"
+explicit = true
 
 [tool.ruff]
 line-length = 100
