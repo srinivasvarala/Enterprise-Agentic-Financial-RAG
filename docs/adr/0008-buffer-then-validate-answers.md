@@ -1,6 +1,6 @@
 # ADR-0008: Buffer, validate, then stream; unverifiable answers are refused
 
-**Status:** Accepted (2026-11-18)
+**Status:** Accepted (2026-11-18). Refusal reasons amended by ADR-0009 (three, not four).
 
 ## Context
 Citations can only be checked against a complete generated answer. Streaming tokens as they are

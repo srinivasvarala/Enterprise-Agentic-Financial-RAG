@@ -48,6 +48,13 @@ class Settings(BaseSettings):
     voyage_batch_size: int = 64
     voyage_timeout_seconds: float = 60.0
 
+    # Answer generation (ADR-0005). `extractive` quotes the top chunk: an offline stand-in.
+    generator_backend: Literal["claude", "extractive"] = "claude"
+    anthropic_api_key: SecretStr = SecretStr("")  # empty: the SDK resolves its own credentials
+    answer_model: str = "claude-sonnet-5-5"
+    answer_max_tokens: int = 16000  # thinking tokens count toward this
+    answer_timeout_seconds: float = 120.0
+
     # Which Reranker the composition root wires; `overlap` is an offline stand-in for tests
     reranker_backend: Literal["bge", "overlap"] = "bge"
     reranker_model: str = "BAAI/bge-reranker-base"  # downloaded on first use

@@ -14,3 +14,10 @@ class TransientError(Exception):
 
 class TenantRequiredError(Exception):
     """A vector store call was made without a tenant id. Always a coding mistake."""
+
+
+class ModelOutputError(Exception):
+    """The model's reply could not be understood (not the requested shape). Never retried.
+
+    The answer is refused as unverifiable; the message is for logs, not for the Reader.
+    """

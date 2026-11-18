@@ -5,9 +5,11 @@ from typing import Protocol
 from uuid import UUID
 
 from finrag.core.domain import (
+    DraftAnswer,
     EvidenceChunk,
     IngestionJob,
     ParsedDocument,
+    Principal,
     SearchHit,
     SparseVector,
     VectorPoint,
@@ -110,3 +112,19 @@ class Reranker(Protocol):
     """Scores each chunk 0 to 1 for how well it answers the question, in input order."""
 
     def score(self, question: str, chunks: Sequence[EvidenceChunk]) -> list[float]: ...
+
+
+class EvidenceRetriever(Protocol):
+    """Finds the Evidence for a question within the Principal's Collection."""
+
+    def retrieve(self, principal: Principal, question: str) -> tuple[EvidenceChunk, ...]: ...
+
+
+class AnswerGenerator(Protocol):
+    """Drafts an answer from the Evidence. The draft is unverified.
+
+    Raises finrag.core.errors.ModelOutputError when the model's reply is not usable and
+    TransientError for retryable provider failures.
+    """
+
+    def generate(self, question: str, evidence: Sequence[EvidenceChunk]) -> DraftAnswer: ...

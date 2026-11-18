@@ -124,7 +124,6 @@ class RefusalReason(StrEnum):
     INSUFFICIENT_EVIDENCE = "insufficient_evidence"
     UNVERIFIABLE = "unverifiable"
     OUT_OF_POLICY = "out_of_policy"
-    NEEDS_CALCULATION = "needs_calculation"
 
 
 @dataclass(frozen=True, slots=True)

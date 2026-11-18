@@ -79,7 +79,7 @@ _Avoid_: Highlight, excerpt
 
 **Refusal**:
 An answer that declines to answer because the evidence is insufficient or the question falls outside policy.
-A refusal has exactly one reason: _insufficient evidence_ (nothing relevant was retrieved), _unverifiable_ (an answer was drafted but its citations could not be verified), _out of policy_ (investment advice or a blocked question), or _needs calculation_ (the question requires figures to be computed, which is not done).
+A refusal has exactly one reason: _insufficient evidence_ (nothing relevant was retrieved), _unverifiable_ (an answer was drafted but its citations could not be verified), or _out of policy_ (investment advice or a blocked question).
 _Avoid_: Fallback, error, "I don't know"
 
 **Investment Advice**:
