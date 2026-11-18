@@ -1,4 +1,4 @@
-.PHONY: install up down dev lint fmt test test-int eval
+.PHONY: install up down migrate dev lint fmt test test-int eval
 
 install:
 	uv sync
@@ -9,6 +9,9 @@ up:
 
 down:
 	docker compose down
+
+migrate:
+	uv run alembic upgrade head
 
 dev:
 	uv run uvicorn finrag.api.app:app --reload --port 8000
