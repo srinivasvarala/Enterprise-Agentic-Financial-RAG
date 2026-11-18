@@ -120,6 +120,14 @@ class SearchHit:
 # -- Answering: generator output, retrieved Evidence and the validated Answer (ADR-0008) ----------
 
 
+class AnswerStage(StrEnum):
+    """Where answering is, reported to the client while it works."""
+
+    RETRIEVING = "retrieving"
+    GENERATING = "generating"
+    VALIDATING = "validating"
+
+
 class RefusalReason(StrEnum):
     INSUFFICIENT_EVIDENCE = "insufficient_evidence"
     UNVERIFIABLE = "unverifiable"

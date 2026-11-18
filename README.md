@@ -60,6 +60,24 @@ curl -s localhost:6333/collections/finrag_chunks/points/count \
   -d '{"exact": true, "filter": {"must": [{"key": "document_id", "match": {"value": "<id>"}}]}}'
 ```
 
+### Ask a question
+
+```bash
+# streams Server-Sent Events: progress (retrieving, generating, validating), then one answer
+curl -N localhost:8000/query -H 'content-type: application/json' \
+  -d '{"question": "What were cash and cash equivalents at year end?"}'
+```
+
+The `answer` event carries `text`, `citations` (document, pages, section path, quoted span) and
+`refusal_reason`, which is `null` for a verified answer and otherwise `insufficient_evidence`,
+`unverifiable` or `out_of_policy`. Text is sent only after every citation has been verified
+(ADR-0008). If answering fails once the stream has started, a single `error` event ends it.
+
+Answers come from Claude: set `FINRAG_ANTHROPIC_API_KEY` in `.env`. The first question downloads
+the bge reranker model. To exercise the endpoint offline, use
+`FINRAG_GENERATOR_BACKEND=extractive FINRAG_RERANKER_BACKEND=overlap` (it quotes the best-matching
+chunk; not a real model).
+
 ### Memory
 
 The worker runs Docling (layout and table models) on the CPU: roughly 1 GB for a short PDF and more
