@@ -130,6 +130,7 @@ services:
         condition: service_healthy
     volumes:
       - ./evals:/evals:ro
+      - ./evals/results:/evals/results # writable: the build records the index fingerprint here
     command:
       [
         "python", "-m", "finrag.evaluation.index",

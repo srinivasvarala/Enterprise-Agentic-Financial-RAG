@@ -3,7 +3,7 @@
 Runs inside the `eval` image under the compose `eval` profile, into the eval Tenant, Collection,
 Qdrant collection and blob bucket (see `finrag.evaluation.environment`). The build is idempotent
 (a second run adds nothing) and ingests the smallest PDF first so a failure on a big one costs
-the least. The index fingerprint and staleness check belong to a later ticket.
+the least. A successful build records the index fingerprint (`finrag.evaluation.fingerprint`).
 """
 
 import argparse
@@ -15,7 +15,16 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Protocol
 
-from finrag.evaluation.fetch import CACHE_DIR, MANIFEST_PATH, ManifestEntry, load_manifest
+from finrag.evaluation.fetch import (
+    CACHE_DIR,
+    MANIFEST_PATH,
+    REPO_ROOT,
+    ManifestEntry,
+    load_manifest,
+)
+from finrag.evaluation.render import RENDER_RECORD_NAME
+
+RESULTS_DIR = REPO_ROOT / "evals" / "results"  # gitignored
 
 
 class MissingPdfError(Exception):
@@ -93,6 +102,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Build the eval index from the rendered Filings")
     parser.add_argument("--manifest", type=Path, default=MANIFEST_PATH)
     parser.add_argument("--cache-dir", type=Path, default=CACHE_DIR)
+    parser.add_argument("--results-dir", type=Path, default=RESULTS_DIR)
     args = parser.parse_args(argv)
 
     from finrag.core.config import Settings
@@ -109,6 +119,18 @@ def main(argv: Sequence[str] | None = None) -> int:
     except (EvalEnvironmentError, MissingPdfError, IndexBuildError) as exc:
         print(f"eval-index refused: {exc}", file=sys.stderr)
         return 1
+    from finrag.evaluation.fingerprint import IndexLocations, QdrantPointCounter, record_index
+
+    settings = Settings()
+    counter = QdrantPointCounter(
+        settings.qdrant_url, settings.qdrant_collection, settings.qdrant_timeout_seconds
+    )
+    where = IndexLocations(
+        manifest=args.manifest,
+        render_record=args.cache_dir / RENDER_RECORD_NAME,
+        index_record=args.results_dir / "index.json",
+    )
+    record_index(where, settings, counter)
     added = sum(r.ingested for r in reports)
     print(f"{added} of {len(reports)} Filings newly ingested into the eval index")
     return 0
