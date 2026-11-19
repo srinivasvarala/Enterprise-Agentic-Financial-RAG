@@ -10,6 +10,7 @@ from finrag.core.config import Settings
 from finrag.evaluation.fingerprint import (
     IndexLocations,
     IndexStatus,
+    InvalidIndexError,
     StaleIndexError,
     check_index,
     record_index,
@@ -143,3 +144,33 @@ def test_eval_commands_proceed_when_ok_and_never_touch_the_index(world: World) -
     require_fresh_index(world.where, world.settings, world.counter)
 
     assert world.where.index_record.read_text() == before
+
+
+class FakeDocuments:
+    """Stands in for the eval Tenant's Document rows."""
+
+    def __init__(self, documents: int) -> None:
+        self.documents = documents
+
+    def count_documents(self) -> int:
+        return self.documents
+
+
+def test_recording_refuses_when_the_document_count_differs_from_the_manifest(
+    world: World,
+) -> None:
+    # the manifest of the fixture world lists one Filing; two Documents means a duplicated Filing
+    with pytest.raises(InvalidIndexError, match=r"2 Documents.*1 Filing"):
+        record_index(world.where, world.settings, world.counter, FakeDocuments(2))
+
+
+def test_a_doubled_index_is_stale_even_when_the_point_count_matches_the_record(
+    world: World,
+) -> None:
+    record_index(world.where, world.settings, world.counter, FakeDocuments(1))
+    assert check_index(world.where, world.settings, world.counter, FakeDocuments(1)).ok
+
+    status = check_index(world.where, world.settings, world.counter, FakeDocuments(2))
+
+    assert not status.ok
+    assert status.reason is not None and "Documents" in status.reason

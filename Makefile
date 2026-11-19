@@ -73,9 +73,10 @@ eval-render: eval-image ## render cached filings to PDF in the eval image, offli
 	docker run --rm --network none --user $$(id -u):$$(id -g) -v "$(CURDIR)/evals:/evals" finrag-eval:dev \
 	  python -m finrag.evaluation.render --manifest /evals/manifest.json --cache-dir /evals/cache
 
-eval-index: check-docker-memory eval-image ## ingest the rendered filings into the eval tenant (needs `make up`, `make eval-render`; real filings need FINRAG_VOYAGE_API_KEY)
+eval-index: check-docker-memory eval-image ## ingest the rendered filings into the eval tenant; REBUILD=1 first wipes only the eval namespace (needs `make up`, `make eval-render`; real filings need FINRAG_VOYAGE_API_KEY)
 	mkdir -p evals/results
-	docker compose --profile eval run --rm --no-deps eval-index
+	docker compose --profile eval run --rm --no-deps eval-index python -m finrag.evaluation.index \
+	  --manifest /evals/manifest.json --cache-dir /evals/cache $(if $(REBUILD),--rebuild)
 
 eval-retrieval: eval-image ## retrieval-only metrics over the real eval index (needs `make up`, `make eval-index`; embeddings only, no paid answer calls)
 	mkdir -p evals/results

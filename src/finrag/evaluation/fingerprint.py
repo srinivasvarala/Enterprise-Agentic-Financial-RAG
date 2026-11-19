@@ -13,6 +13,7 @@ import json
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Protocol
+from uuid import UUID
 
 from finrag.core.config import Settings
 from finrag.evaluation.fetch import CACHE_DIR, MANIFEST_PATH, REPO_ROOT
@@ -26,6 +27,59 @@ class PointCounter(Protocol):
     def count_points(self) -> int:
         """Live number of points in the eval Qdrant collection."""
         ...
+
+
+class DocumentCounter(Protocol):
+    def count_documents(self) -> int:
+        """Live number of Documents in the eval Tenant."""
+        ...
+
+
+class InvalidIndexError(Exception):
+    """The index just built is not a valid eval index (for example a Filing is duplicated)."""
+
+
+class SqlDocumentCounter:
+    """Live count of the eval Tenant's Documents (tenant-scoped)."""
+
+    def __init__(self, session_factory: Any, tenant_id: UUID) -> None:
+        self._session_factory = session_factory
+        self._tenant_id = tenant_id
+
+    @classmethod
+    def from_settings(cls, settings: Settings) -> "SqlDocumentCounter":
+        from finrag.storage.db import build_engine, build_session_factory
+
+        return cls(build_session_factory(build_engine(settings)), settings.default_tenant_id)
+
+    def count_documents(self) -> int:
+        from sqlalchemy import func, select
+
+        from finrag.storage.models import Document
+
+        with self._session_factory() as session:
+            return (
+                session.scalar(
+                    select(func.count())
+                    .select_from(Document)
+                    .where(Document.tenant_id == self._tenant_id)
+                )
+                or 0
+            )
+
+
+def _filings(where: "IndexLocations") -> int:
+    return len(json.loads(where.manifest.read_text()))
+
+
+def _document_mismatch(filings: int, documents: int) -> str | None:
+    if documents == filings:
+        return None
+    return (
+        f"the eval Tenant holds {documents} Documents but the manifest lists {filings} "
+        f"Filing{'s' if filings != 1 else ''} "
+        "(a duplicated index needs `make eval-index REBUILD=1`)"
+    )
 
 
 class QdrantPointCounter:
@@ -84,14 +138,34 @@ def _inputs(where: IndexLocations, settings: Settings) -> dict[str, Any]:
     }
 
 
-def record_index(where: IndexLocations, settings: Settings, counter: PointCounter) -> None:
-    """Write the fingerprint of the index just built. Call it only after a successful build."""
-    record = {**_inputs(where, settings), "expected_points": counter.count_points()}
+def record_index(
+    where: IndexLocations,
+    settings: Settings,
+    counter: PointCounter,
+    documents: DocumentCounter | None = None,
+) -> None:
+    """Write the fingerprint of the index just built. Call it only after a successful build.
+
+    With `documents`, refuses (`InvalidIndexError`) unless there is exactly one Document per
+    manifest Filing, so a duplicated Filing can never be recorded as the baseline index.
+    """
+    record: dict[str, Any] = {**_inputs(where, settings), "expected_points": counter.count_points()}
+    if documents is not None:
+        live_documents = documents.count_documents()
+        mismatch = _document_mismatch(_filings(where), live_documents)
+        if mismatch is not None:
+            raise InvalidIndexError(mismatch)
+        record["expected_documents"] = live_documents
     where.index_record.parent.mkdir(parents=True, exist_ok=True)
     where.index_record.write_text(json.dumps(record, indent=2, sort_keys=True))
 
 
-def check_index(where: IndexLocations, settings: Settings, counter: PointCounter) -> IndexStatus:
+def check_index(
+    where: IndexLocations,
+    settings: Settings,
+    counter: PointCounter,
+    documents: DocumentCounter | None = None,
+) -> IndexStatus:
     """Ok, or stale with the reason. Read-only."""
     if not where.index_record.exists():
         return IndexStatus(False, "no index record: the eval index has not been built")
@@ -104,6 +178,10 @@ def check_index(where: IndexLocations, settings: Settings, counter: PointCounter
                 f"the {name} changed since the index was built: {recorded.get(name)!r} "
                 f"-> {value!r}",
             )
+    if documents is not None:
+        mismatch = _document_mismatch(_filings(where), documents.count_documents())
+        if mismatch is not None:
+            return IndexStatus(False, mismatch)
     live = counter.count_points()
     expected = recorded.get("expected_points")
     if live != expected:
@@ -113,8 +191,13 @@ def check_index(where: IndexLocations, settings: Settings, counter: PointCounter
     return IndexStatus(True)
 
 
-def require_fresh_index(where: IndexLocations, settings: Settings, counter: PointCounter) -> None:
+def require_fresh_index(
+    where: IndexLocations,
+    settings: Settings,
+    counter: PointCounter,
+    documents: DocumentCounter | None = None,
+) -> None:
     """Raise `StaleIndexError` unless the index is ok. For the eval commands; never ingests."""
-    status = check_index(where, settings, counter)
+    status = check_index(where, settings, counter, documents)
     if not status.ok:
         raise StaleIndexError(f"the eval index is stale: {status.reason}; {REBUILD_HINT}.")

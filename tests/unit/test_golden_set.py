@@ -8,6 +8,7 @@ from finrag.core.domain import ParagraphBlock, ParsedDocument, TableBlock
 from finrag.evaluation.golden import (
     GoldenSetError,
     GoldSpan,
+    TableSpan,
     check_golden_set,
     is_hit,
     load_golden_set,
@@ -206,3 +207,29 @@ def test_every_problem_is_reported_not_just_the_first() -> None:
     )
 
     assert [p.question_id for p in check_golden_set(golden, {"apple": APPLE})] == ["q1", "q2"]
+
+
+def test_a_table_hit_needs_the_label_and_the_figure_on_the_same_row() -> None:
+    span = TableSpan("apple", 3, 3, "Total net sales", "391,035")
+    prose = "Total net sales grew.\n\n| Products | 391,035 | 383,285 |\n| Services | 1 | 2 |"
+    one_row = "| | 2024 | 2023 |\n|---|---|---|\n| Total net sales | 391,035 | 383,285 |"
+
+    assert not is_hit(span, prose)  # label in prose, figure in a different row
+    assert not is_hit(span, "| Total net sales | 1 |\n| Products | 391,035 |")
+    assert is_hit(span, one_row)
+    assert is_hit(span, "|  total   NET sales |  391,035 |")  # case and whitespace tolerant
+
+
+def test_the_golden_set_check_applies_the_same_row_rule() -> None:
+    split = ParsedDocument(
+        blocks=(
+            TableBlock(
+                page=3,
+                header="| | 2024 |\n|---|---|",
+                markdown="| Total net sales | 1 |\n| Products | 391,035 |",
+            ),
+        )
+    )
+    golden = load_golden_set(_jsonl(_table_question()))
+
+    assert [p.question_id for p in check_golden_set(golden, {"apple": split})] == ["t1"]

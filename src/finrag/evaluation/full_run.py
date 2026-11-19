@@ -27,6 +27,7 @@ from finrag.evaluation.dry_run import CostCapExceededError, SpendTracker
 from finrag.evaluation.evaluate import EvalPipeline, JudgeFailureRateExceededError, Report, evaluate
 from finrag.evaluation.fetch import CACHE_DIR, MANIFEST_PATH
 from finrag.evaluation.fingerprint import (
+    DocumentCounter,
     IndexLocations,
     PointCounter,
     StaleIndexError,
@@ -83,6 +84,7 @@ def run_full_eval(
     now: datetime,
     cost_cap_usd: float | None,
     max_judge_failure_rate: float,
+    documents: DocumentCounter | None = None,
 ) -> FullRun:
     """Refuse without a cap or on a stale index, then answer and judge every question."""
     if cost_cap_usd is None or cost_cap_usd <= 0:
@@ -91,7 +93,7 @@ def run_full_eval(
             "(make eval COST_CAP_USD=20), a positive amount the owner has approved."
         )
     golden = load_golden_dir(golden_dir)
-    require_fresh_index(where, settings, counter)
+    require_fresh_index(where, settings, counter, documents)
     spend = SpendTracker(
         settings,
         generator_usage,
@@ -192,7 +194,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         require_eval_settings,
     )
     from finrag.evaluation.evaluate import EvaluationPipeline
-    from finrag.evaluation.fingerprint import QdrantPointCounter
+    from finrag.evaluation.fingerprint import QdrantPointCounter, SqlDocumentCounter
     from finrag.evaluation.render import RENDER_RECORD_NAME
     from finrag.generation.claude import ClaudeAnswerGenerator
 
@@ -237,6 +239,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             now=datetime.now(UTC),
             cost_cap_usd=cap,
             max_judge_failure_rate=rate,
+            documents=SqlDocumentCounter.from_settings(settings),
         )
     except (
         EvalRefusedError,

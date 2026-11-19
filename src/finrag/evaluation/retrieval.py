@@ -23,6 +23,7 @@ from finrag.core.domain import Principal
 from finrag.evaluation.evaluate import EvalPipeline, Metrics, Report, evaluate
 from finrag.evaluation.fetch import CACHE_DIR, MANIFEST_PATH, REPO_ROOT
 from finrag.evaluation.fingerprint import (
+    DocumentCounter,
     IndexLocations,
     PointCounter,
     StaleIndexError,
@@ -105,10 +106,11 @@ def run_retrieval_eval(
     image_digest: str,
     git_sha: str,
     now: datetime,
+    documents: DocumentCounter | None = None,
 ) -> RetrievalRun:
     """Load the Golden Set, refuse a stale index, evaluate retrieval-only, write the results."""
     golden = load_golden_dir(golden_dir)
-    require_fresh_index(where, settings, counter)
+    require_fresh_index(where, settings, counter, documents)
     report = evaluate(golden, pipeline, principal, retrieval_only=True)
     record = results_record(
         "retrieval",
@@ -171,7 +173,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         eval_principal,
         require_eval_settings,
     )
-    from finrag.evaluation.fingerprint import QdrantPointCounter
+    from finrag.evaluation.fingerprint import QdrantPointCounter, SqlDocumentCounter
     from finrag.evaluation.render import RENDER_RECORD_NAME
 
     settings = Settings()
@@ -194,6 +196,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             image_digest=settings.eval_image_digest,
             git_sha=settings.eval_git_sha,
             now=datetime.now(UTC),
+            documents=SqlDocumentCounter.from_settings(settings),
         )
     except (EvalEnvironmentError, NoGoldenSetError, GoldenSetError, StaleIndexError) as exc:
         print(f"eval-retrieval refused: {exc}", file=sys.stderr)
