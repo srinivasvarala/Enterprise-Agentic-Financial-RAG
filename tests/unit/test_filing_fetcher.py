@@ -8,7 +8,7 @@ from pathlib import Path
 
 import pytest
 
-from finrag.evals.fetch import (
+from finrag.evaluation.fetch import (
     GENERIC_CLIENT_NAME,
     MANIFEST_PATH,
     ChecksumMismatchError,

@@ -58,7 +58,7 @@ ci: ## wait for GitHub CI on the pushed HEAD; non-zero if any job fails (Linux r
 	gh run watch $$id --interval 20 --exit-status
 
 eval-fetch: ## download the pinned 10-K filings into evals/cache/ and verify checksums (SEC EDGAR)
-	uv run python -m finrag.evals.fetch
+	uv run python -m finrag.evaluation.fetch
 
 eval: ## eval suite (real models, costs money)
 	uv run pytest -m eval evals/
