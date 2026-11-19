@@ -11,7 +11,8 @@ differs between macOS and the Linux image CI and production use.
 ## Decision
 - **Fixtures.** Five real SEC 10-Ks (Apple, Microsoft, Alphabet, Walmart, Nike; most recent
   complete fiscal year at fetch time), fetched by script into a gitignored cache. A committed
-  manifest pins each by accession number and sha256. The fetcher identifies itself with a generic
+  manifest pins each by accession number and a canonical sha256 (canonicalisation v1 drops the
+  SEC edge's rotating trailing `<script>` token before hashing; the cached file stays as served). The fetcher identifies itself with a generic
   client name, never a personal contact. This replaces "committed fixtures".
 - **Gold labels** are Gold Spans: document, page range and a verbatim span for text answers, or a
   row label plus figure for table answers. A Hit is a retrieved chunk containing the Gold Span.

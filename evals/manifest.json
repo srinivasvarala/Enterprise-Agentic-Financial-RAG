@@ -6,7 +6,8 @@
     "form": "10-K",
     "accession_number": "0000320193-26-000026",
     "url": "https://www.sec.gov/Archives/edgar/data/320193/000032019326000026/aapl-20260926.htm",
-    "sha256": "28f70c5dce6b5b62750cd564f303c795cfaccb516851d23835dc57f105e9452c"
+    "canonicalisation": 1,
+    "canonical_sha256": "bc6e71908b83b5260b23271176e4b8b709094670cb0f3bd8a9a44a9c91df8cbb"
   },
   {
     "company": "Microsoft",
@@ -15,7 +16,8 @@
     "form": "10-K",
     "accession_number": "0001193125-26-323660",
     "url": "https://www.sec.gov/Archives/edgar/data/789019/000119312526323660/msft-20260630.htm",
-    "sha256": "a9b7a32211831f7a75deb23d0a8b41f2ca337088d6000e621d2665c0860817ac"
+    "canonicalisation": 1,
+    "canonical_sha256": "4bcf2da2871acc19e32c5a62f36f6d83d6aae03cdc4aaa9a86a9a21ee8223f02"
   },
   {
     "company": "Alphabet",
@@ -24,7 +26,8 @@
     "form": "10-K",
     "accession_number": "0001652044-26-000018",
     "url": "https://www.sec.gov/Archives/edgar/data/1652044/000165204426000018/goog-20251231.htm",
-    "sha256": "a4904151b4a5fe3555f89e886f4ddb94c5a85e61a8434758f0e22abfce12ba6e"
+    "canonicalisation": 1,
+    "canonical_sha256": "c2f6301004f35411a20611c14ff01d80a85c0bcbab6053c80d8cc7f6fc747161"
   },
   {
     "company": "Walmart",
@@ -33,7 +36,8 @@
     "form": "10-K",
     "accession_number": "0000104169-26-000055",
     "url": "https://www.sec.gov/Archives/edgar/data/104169/000010416926000055/wmt-20260131.htm",
-    "sha256": "c33b35bf549ff5879ccfdaa9464a99fa16fbb72cc52d0a8e86994e9a852de405"
+    "canonicalisation": 1,
+    "canonical_sha256": "276a6accff6066f00342ba03b390c6c2bd51aa7246f0346df22df0b839a5bf5c"
   },
   {
     "company": "Nike",
@@ -42,6 +46,7 @@
     "form": "10-K",
     "accession_number": "0000320187-26-000088",
     "url": "https://www.sec.gov/Archives/edgar/data/320187/000032018726000088/nke-20260531.htm",
-    "sha256": "a73c4a8ac148651635bd36e8bd7bbebc7b39ee607702bb0582201b1e9bf16f54"
+    "canonicalisation": 1,
+    "canonical_sha256": "6dd837804f1ede7b42ea6511402f3d01e59331ed3a362a88e1e4fc7269d7d41a"
   }
 ]

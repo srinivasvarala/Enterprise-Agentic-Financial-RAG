@@ -2,6 +2,7 @@
 
 import hashlib
 import json
+import re
 import sys
 import time
 from collections.abc import Callable, Mapping, Sequence
@@ -20,6 +21,22 @@ CACHE_DIR = REPO_ROOT / "evals" / "cache"  # gitignored
 MIN_REQUEST_INTERVAL_S = 0.5
 
 
+# Canonicalisation v1. The SEC edge serves a rotating token in the final <script> element just
+# before </body></html>; the filing is otherwise unchanged. The checksum is taken over the bytes
+# with that one trailing element removed. Any other byte change still alters the hash. The files
+# in the cache stay exactly as served. Changing this rule needs a new version number.
+CANONICALISATION_VERSION = 1
+_TRAILING_SCRIPT = re.compile(
+    rb"<script\b[^>]*>(?:(?!</script>).)*</script>(?=\s*</body>\s*</html>\s*$)",
+    re.DOTALL | re.IGNORECASE,
+)
+
+
+def canonical_sha256(body: bytes) -> str:
+    """sha256 of the Filing with its trailing edge-token script element removed (version 1)."""
+    return hashlib.sha256(_TRAILING_SCRIPT.sub(b"", body, count=1)).hexdigest()
+
+
 class ChecksumMismatchError(Exception):
     """A downloaded Filing does not match the checksum its manifest entry pins."""
 
@@ -35,7 +52,8 @@ class ManifestEntry(BaseModel, frozen=True):
     form: str
     accession_number: str
     url: str
-    sha256: str
+    canonicalisation: int
+    canonical_sha256: str
 
 
 def fetch_filings(
@@ -49,8 +67,13 @@ def fetch_filings(
     cache_dir.mkdir(parents=True, exist_ok=True)
     last_request: float | None = None
     for entry in entries:
+        if entry.canonicalisation != CANONICALISATION_VERSION:
+            raise ValueError(
+                f"{entry.company} manifest entry uses canonicalisation {entry.canonicalisation}; "
+                f"this fetcher implements {CANONICALISATION_VERSION}."
+            )
         target = cache_dir / f"{entry.accession_number}.htm"
-        if target.exists() and hashlib.sha256(target.read_bytes()).hexdigest() == entry.sha256:
+        if target.exists() and canonical_sha256(target.read_bytes()) == entry.canonical_sha256:
             continue
         if last_request is not None:
             wait = MIN_REQUEST_INTERVAL_S - (clock() - last_request)
@@ -58,7 +81,7 @@ def fetch_filings(
                 sleep(wait)
         last_request = clock()
         body = http.get(entry.url, {"User-Agent": GENERIC_CLIENT_NAME})
-        if hashlib.sha256(body).hexdigest() != entry.sha256:
+        if canonical_sha256(body) != entry.canonical_sha256:
             raise ChecksumMismatchError(
                 f"{entry.company} {entry.form} fiscal {entry.fiscal_year} "
                 f"({entry.accession_number}) does not match its pinned checksum; "
