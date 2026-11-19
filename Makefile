@@ -1,5 +1,5 @@
 .DEFAULT_GOAL := help
-.PHONY: help install build up down logs migrate reconcile dev lint fmt test test-int ci eval eval-fetch eval-render eval-index eval-image check-eval-image check-docker-memory check-image
+.PHONY: help install build up down logs migrate reconcile dev lint fmt test test-int ci eval eval-fetch eval-render eval-index eval-retrieval eval-image check-eval-image check-docker-memory check-image
 
 help: ## list targets
 	@grep -hE '^[a-z-]+:.*## ' $(MAKEFILE_LIST) | awk -F':.*## ' '{printf "  %-10s %s\n", $$1, $$2}'
@@ -76,6 +76,12 @@ eval-render: eval-image ## render cached filings to PDF in the eval image, offli
 eval-index: check-docker-memory eval-image ## ingest the rendered filings into the eval tenant (needs `make up`, `make eval-render`; real filings need FINRAG_VOYAGE_API_KEY)
 	mkdir -p evals/results
 	docker compose --profile eval run --rm --no-deps eval-index
+
+eval-retrieval: eval-image ## retrieval-only metrics over the real eval index (needs `make up`, `make eval-index`; embeddings only, no paid answer calls)
+	mkdir -p evals/results
+	FINRAG_EVAL_IMAGE_DIGEST=$$(docker image inspect --format '{{.Id}}' finrag-eval:dev) \
+	FINRAG_EVAL_GIT_SHA=$$(git rev-parse --short HEAD) \
+	docker compose --profile eval run --rm --no-deps eval-retrieval
 
 eval: ## eval suite (real models, costs money)
 	uv run pytest -m eval evals/

@@ -100,9 +100,15 @@ def test_require_eval_settings_accepts_the_eval_profile_settings() -> None:
     )
 
 
-def test_the_compose_eval_profile_matches_the_eval_environment_and_is_memory_capped() -> None:
+EVAL_SERVICES = ("eval-index", "eval-retrieval")
+
+
+@pytest.mark.parametrize("name", EVAL_SERVICES)
+def test_the_compose_eval_profile_matches_the_eval_environment_and_is_memory_capped(
+    name: str,
+) -> None:
     compose = yaml.safe_load((REPO_ROOT / "docker-compose.yml").read_text())
-    service = compose["services"]["eval-index"]
+    service = compose["services"][name]
 
     assert service["profiles"] == ["eval"]
     assert service["build"]["target"] == "eval"
@@ -113,5 +119,5 @@ def test_the_compose_eval_profile_matches_the_eval_environment_and_is_memory_cap
     assert env["FINRAG_QDRANT_COLLECTION"] == EVAL_QDRANT_COLLECTION
     assert env["FINRAG_S3_BUCKET"] == EVAL_S3_BUCKET
     # no other service is part of the profile: the dev stack is untouched by `--profile eval`
-    others = [n for n, s in compose["services"].items() if n != "eval-index"]
+    others = [n for n, s in compose["services"].items() if n not in EVAL_SERVICES]
     assert all("profiles" not in compose["services"][n] for n in others)
