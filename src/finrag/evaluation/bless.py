@@ -27,6 +27,15 @@ def bless(source: Path, baseline: Path, *, allow_retrieval_only: bool = False) -
         data["report"]["overall"]
     except (OSError, ValueError, KeyError, TypeError) as exc:
         raise BlessRefusedError(f"{source} is not an eval results file.") from exc
+    if data.get("incomplete"):
+        raise BlessRefusedError(
+            f"{source.name} is an incomplete run ({data['incomplete']['reason']}): rerun it first."
+        )
+    if data["report"].get("errors"):
+        raise BlessRefusedError(
+            f"{source.name} has questions that failed and are left out of its metrics: "
+            "rerun it so the Baseline covers the whole Golden Set."
+        )
     if kind == "retrieval" and not allow_retrieval_only:
         raise BlessRefusedError(
             f"{source.name} is a retrieval-only run: it has no answer or judged metrics. "

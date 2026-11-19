@@ -7,18 +7,19 @@ A Refusal with reason `insufficient_evidence` is the right outcome for an unansw
 import json
 from collections import defaultdict
 from collections.abc import Callable, Sequence
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, field
 from typing import Any, Protocol
 
+from finrag.core.config import Settings
 from finrag.core.domain import Answer, EvidenceChunk, Principal, RefusalReason
 from finrag.core.interfaces import AnswerGenerator
-from finrag.evaluation.golden import GoldenSet, GoldSpan, Question, is_hit
+from finrag.evaluation.golden import GoldenSet, GoldSpan, Question, is_citation_hit, is_hit
 from finrag.evaluation.judge import Judge, JudgeCase, JudgeScores
 from finrag.generation.service import AnswerService
 from finrag.retrieval.retriever import RetrievalTrace, Retriever
 
-EVIDENCE_K = 8  # recall@8: the Evidence the model sees
-SEARCH_K = 100  # recall@100: the candidates before the rerank
+EVIDENCE_K = 8  # default recall@8 depth; a real run passes `settings.rerank_top_n`
+SEARCH_K = 100  # default recall@100 depth; a real run passes `search_depth(settings)`
 ANSWERED = "answered"
 
 
@@ -27,11 +28,17 @@ class JudgeFailureRateExceededError(Exception):
 
     def __init__(self, *, failures: int, questions: int, allowed_rate: float) -> None:
         super().__init__(
-            f"stopped: the judge failed on {failures} of {questions} questions, over the "
-            f"allowed {allowed_rate:.0%}. Check the judge model and the Anthropic key, then rerun."
+            f"stopped: the judge failed on {failures} of {questions} questions eligible for "
+            f"judging, over the allowed {allowed_rate:.0%}. Check the judge model and the "
+            "Anthropic key, then rerun."
         )
         self.failures = failures
         self.questions = questions
+
+
+def search_depth(settings: Settings) -> int:
+    """Candidates the hybrid search asks for (dense plus sparse). Fusion may return fewer."""
+    return settings.retrieve_dense_k + settings.retrieve_sparse_k
 
 
 @dataclass(frozen=True, slots=True)
@@ -131,11 +138,23 @@ class JudgedSection:
 
 
 @dataclass(frozen=True, slots=True)
+class QuestionError:
+    """A question the pipeline failed on. Excluded from every metric; only the class is kept."""
+
+    id: str
+    category: str
+    error: str  # the exception class, never its message
+
+
+@dataclass(frozen=True, slots=True)
 class Report:
     overall: Metrics
     by_category: dict[str, Metrics]
     questions: tuple[QuestionResult, ...]
     judged: JudgedSection | None = None  # None when no judge ran
+    errors: tuple[QuestionError, ...] = ()  # questions that failed, excluded from the metrics
+    search_k: int = SEARCH_K  # the recall@100 depth this run used
+    evidence_k: int = EVIDENCE_K  # the recall@8 depth this run used
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -156,21 +175,25 @@ def _reciprocal_rank(spans: Sequence[GoldSpan], trace: RetrievalTrace) -> float:
     return 0.0
 
 
-def _evaluate_question(q: Question, result: PipelineResult) -> QuestionResult:
+def _evaluate_question(
+    q: Question, result: PipelineResult, *, search_k: int, evidence_k: int
+) -> QuestionResult:
     answer, trace = result.answer, result.trace
     outcome = None
     if answer is not None:
         outcome = ANSWERED if answer.refusal_reason is None else answer.refusal_reason.value
     cited = None
     if answer is not None and answer.refusal_reason is None and q.gold_spans:
-        cited = any(is_hit(s, c.quoted_span) for s in q.gold_spans for c in answer.citations)
+        cited = any(
+            is_citation_hit(s, c.quoted_span) for s in q.gold_spans for c in answer.citations
+        )
     if not q.gold_spans:
         return QuestionResult(q.id, q.category, None, None, None, outcome, cited)
     return QuestionResult(
         q.id,
         q.category,
-        _recall(q.gold_spans, trace.evidence[:EVIDENCE_K]),
-        _recall(q.gold_spans, [c.chunk for c in trace.candidates[:SEARCH_K]]),
+        _recall(q.gold_spans, trace.evidence[:evidence_k]),
+        _recall(q.gold_spans, [c.chunk for c in trace.candidates[:search_k]]),
         _reciprocal_rank(q.gold_spans, trace),
         outcome,
         cited,
@@ -235,6 +258,43 @@ def _judged_section(judge: Judge, items: Sequence[JudgedQuestion]) -> JudgedSect
     )
 
 
+@dataclass(slots=True)
+class RunState:
+    """What a run has produced so far. Kept by the caller so a run that stops still has it."""
+
+    results: list[QuestionResult] = field(default_factory=list)
+    judged: list[JudgedQuestion] = field(default_factory=list)
+    errors: list[QuestionError] = field(default_factory=list)
+    not_judgeable: int = 0  # answerable questions that errored or were refused: never judged
+    asked: int = 0  # questions started, errored ones included
+
+
+def build_report(
+    state: RunState,
+    *,
+    judge: Judge | None,
+    retrieval_only: bool = False,
+    search_k: int = SEARCH_K,
+    evidence_k: int = EVIDENCE_K,
+) -> Report:
+    groups: dict[str, list[QuestionResult]] = defaultdict(list)
+    for r in state.results:
+        groups[r.category].append(r)
+    return Report(
+        overall=_metrics(state.results),
+        by_category={c: _metrics(rs) for c, rs in sorted(groups.items())},
+        questions=tuple(state.results),
+        judged=(
+            _judged_section(judge, state.judged)
+            if judge is not None and not retrieval_only
+            else None
+        ),
+        errors=tuple(state.errors),
+        search_k=search_k,
+        evidence_k=evidence_k,
+    )
+
+
 def evaluate(
     golden: GoldenSet,
     pipeline: EvalPipeline,
@@ -244,54 +304,64 @@ def evaluate(
     judge: Judge | None = None,
     after_question: Callable[[int], None] | None = None,
     max_judge_failure_rate: float = 1.0,
+    state: RunState | None = None,
+    search_k: int = SEARCH_K,
+    evidence_k: int = EVIDENCE_K,
 ) -> Report:
     """Ask every question through the pipeline; report overall, per category and per question.
 
     A retrieval-only run never calls the generator or the judge, so the answer and judged metrics
     are None. `after_question(done)` runs after each question; it may raise to stop the run (the
-    cost dry run does, when projected spend passes its cap).
+    cost cap does). Pass a `state` to keep what was done when the run stops by an exception.
 
-    A judge failure on one question is recorded (null scores, the error class) and the run goes
-    on; once failures exceed `max_judge_failure_rate` of the Golden Set the run stops.
+    A question the pipeline fails on (a provider error) is recorded as an error, with the
+    exception class only, and left out of every metric; the run goes on. A judge failure on one
+    question is recorded (null scores, the error class) and the run goes on; once failures exceed
+    `max_judge_failure_rate` of the questions eligible for judging (answerable and answered, as
+    far as the run has seen) the run stops.
     """
-    results: list[QuestionResult] = []
-    judged: list[JudgedQuestion] = []
+    state = state if state is not None else RunState()
+    answerable = sum(1 for q in golden.questions if q.gold_spans)
     for done, q in enumerate(golden.questions, start=1):
-        result = pipeline.run(principal, q.question, answer=not retrieval_only)
-        results.append(_evaluate_question(q, result))
-        case = _judge_case(q, result) if judge is not None else None
-        if judge is not None and case is not None:
-            try:
-                scores: JudgeScores = judge.judge(case)
-            except Exception as exc:  # any provider failure; only the class is kept
-                judged.append(
-                    JudgedQuestion(q.id, q.category, None, None, None, type(exc).__name__)
-                )
-                failures = sum(1 for j in judged if j.error is not None)
-                if failures / len(golden.questions) > max_judge_failure_rate:
-                    raise JudgeFailureRateExceededError(
-                        failures=failures,
-                        questions=len(golden.questions),
-                        allowed_rate=max_judge_failure_rate,
-                    ) from None
-            else:
-                judged.append(
-                    JudgedQuestion(
-                        q.id,
-                        q.category,
-                        scores.faithfulness,
-                        scores.answer_relevancy,
-                        scores.answer_correctness,
+        state.asked = done
+        try:
+            result = pipeline.run(principal, q.question, answer=not retrieval_only)
+        except Exception as exc:  # a provider failure on this question; only the class is kept
+            state.errors.append(QuestionError(q.id, q.category, type(exc).__name__))
+            if q.gold_spans:
+                state.not_judgeable += 1
+        else:
+            state.results.append(
+                _evaluate_question(q, result, search_k=search_k, evidence_k=evidence_k)
+            )
+            case = _judge_case(q, result) if judge is not None else None
+            if q.gold_spans and result.answer is not None and case is None:
+                state.not_judgeable += 1  # refused: there is no answer to judge
+            if judge is not None and case is not None:
+                try:
+                    scores: JudgeScores = judge.judge(case)
+                except Exception as exc:  # any provider failure; only the class is kept
+                    state.judged.append(
+                        JudgedQuestion(q.id, q.category, None, None, None, type(exc).__name__)
                     )
-                )
+                else:
+                    state.judged.append(
+                        JudgedQuestion(
+                            q.id,
+                            q.category,
+                            scores.faithfulness,
+                            scores.answer_relevancy,
+                            scores.answer_correctness,
+                        )
+                    )
+        failures = sum(1 for j in state.judged if j.error is not None)
+        eligible = max(answerable - state.not_judgeable, 1)
+        if failures and failures / eligible > max_judge_failure_rate:
+            raise JudgeFailureRateExceededError(
+                failures=failures, questions=eligible, allowed_rate=max_judge_failure_rate
+            )
         if after_question is not None:
             after_question(done)
-    groups: dict[str, list[QuestionResult]] = defaultdict(list)
-    for r in results:
-        groups[r.category].append(r)
-    return Report(
-        overall=_metrics(results),
-        by_category={c: _metrics(rs) for c, rs in sorted(groups.items())},
-        questions=tuple(results),
-        judged=_judged_section(judge, judged) if judge is not None and not retrieval_only else None,
+    return build_report(
+        state, judge=judge, retrieval_only=retrieval_only, search_k=search_k, evidence_k=evidence_k
     )

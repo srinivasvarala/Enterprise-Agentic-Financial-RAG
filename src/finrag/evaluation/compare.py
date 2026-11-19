@@ -75,14 +75,42 @@ def _cell(value: float | None) -> str:
     return "null" if value is None else f"{value:.3f}"
 
 
+def _depths(data: dict[str, Any]) -> tuple[Any, Any]:
+    report = data["report"]
+    return report.get("search_k"), report.get("evidence_k")
+
+
+def _warnings(baseline: dict[str, Any], current: dict[str, Any]) -> list[str]:
+    """What makes the two files not directly comparable."""
+    found: list[str] = []
+    if _depths(baseline) != _depths(current):
+        (bs, be), (cs, ce) = _depths(baseline), _depths(current)
+        found.append(
+            f"WARNING: the files were measured at different depths (search_k {bs} vs {cs}, "
+            f"evidence depth {be} vs {ce}; None means not recorded): recall@100 and recall@8 "
+            "are not comparable."
+        )
+    for side, data in (("baseline", baseline), ("current", current)):
+        if data.get("incomplete"):
+            found.append(f"WARNING: the {side} run is incomplete: {data['incomplete']['reason']}.")
+        if data["report"].get("errors"):
+            found.append(
+                f"WARNING: {len(data['report']['errors'])} question(s) failed in the {side} run "
+                "and are left out of its metrics."
+            )
+    return found
+
+
 def compare_report(baseline: dict[str, Any], current: dict[str, Any]) -> str:
     """A Markdown table of baseline, current and delta for every scope and metric."""
     base_scopes, cur_scopes = _scopes(baseline["report"]), _scopes(current["report"])
     names = ["overall", *sorted((base_scopes.keys() | cur_scopes.keys()) - {"overall"})]
+    warnings = _warnings(baseline, current)
     lines = [
         _describe("baseline", baseline) + "  ",
         _describe("current", current),
         "",
+        *(f"{w}\n" for w in warnings),
         "| Scope | Metric | Baseline | Current | Delta |",
         "| --- | --- | ---: | ---: | ---: |",
     ]

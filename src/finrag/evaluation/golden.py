@@ -201,4 +201,25 @@ def is_hit(span: GoldSpan, chunk_text: str) -> bool:
     return False
 
 
-__all__: Sequence[str] = ["GoldenSetError", "check_golden_set", "is_hit", "load_golden_set"]
+def is_citation_hit(span: GoldSpan, quoted_span: str) -> bool:
+    """Does a citation's quote support the Gold Span?
+
+    Yes when the quote contains the whole span (`is_hit`), or, for a text span, when the quote is
+    a verbatim part of the span and at least half its length: a correct but shorter quote still
+    cites the right passage, while a few words that happen to occur in the span do not.
+    """
+    if is_hit(span, quoted_span):
+        return True
+    if not isinstance(span, TextSpan):
+        return False
+    quote, whole = _normalise(quoted_span), _normalise(span.text)
+    return bool(quote) and quote in whole and len(quote) * 2 >= len(whole)
+
+
+__all__: Sequence[str] = [
+    "GoldenSetError",
+    "check_golden_set",
+    "is_citation_hit",
+    "is_hit",
+    "load_golden_set",
+]

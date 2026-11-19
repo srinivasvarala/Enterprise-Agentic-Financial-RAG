@@ -85,7 +85,8 @@ eval-retrieval: eval-image ## retrieval-only metrics over the real eval index (n
 	docker compose --profile eval run --rm --no-deps eval-retrieval
 
 eval-dry-run: eval-image ## PAID: answer+judge up to 5 questions, print measured tokens and cost (ARGS="--limit 8 --cost-cap-usd 2"; more than 5 needs a cap)
-	docker compose --profile eval run --rm --no-deps eval-dry-run python -m finrag.evaluation.dry_run --golden-dir /evals/golden $(ARGS)
+	docker compose --profile eval run --rm --no-deps eval-dry-run python -m finrag.evaluation.dry_run --golden-dir /evals/golden \
+	  --manifest /evals/manifest.json --cache-dir /evals/cache --results-dir /evals/results $(ARGS)
 
 eval: eval-image ## PAID: full run (retrieval, answers, judge); a cost cap is mandatory: make eval COST_CAP_USD=20
 	@test -n "$(COST_CAP_USD)" || { echo "make eval refused: set a per-run cost cap, e.g. make eval COST_CAP_USD=20 (no default)" >&2; exit 1; }

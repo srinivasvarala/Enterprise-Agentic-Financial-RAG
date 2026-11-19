@@ -20,7 +20,13 @@ from typing import Any
 
 from finrag.core.config import Settings
 from finrag.core.domain import Principal
-from finrag.evaluation.evaluate import EvalPipeline, Metrics, Report, evaluate
+from finrag.evaluation.evaluate import (
+    EvalPipeline,
+    Metrics,
+    Report,
+    evaluate,
+    search_depth,
+)
 from finrag.evaluation.fetch import CACHE_DIR, MANIFEST_PATH, REPO_ROOT
 from finrag.evaluation.fingerprint import (
     DocumentCounter,
@@ -111,7 +117,14 @@ def run_retrieval_eval(
     """Load the Golden Set, refuse a stale index, evaluate retrieval-only, write the results."""
     golden = load_golden_dir(golden_dir)
     require_fresh_index(where, settings, counter, documents)
-    report = evaluate(golden, pipeline, principal, retrieval_only=True)
+    report = evaluate(
+        golden,
+        pipeline,
+        principal,
+        retrieval_only=True,
+        search_k=search_depth(settings),
+        evidence_k=settings.rerank_top_n,
+    )
     record = results_record(
         "retrieval",
         report,
@@ -141,6 +154,11 @@ def format_summary(report: Report) -> str:
         lines.append(
             f"{name:<{width}}  {m.questions:>3}  {_cell(m.recall_at_8):>8}  "
             f"{_cell(m.recall_at_100):>10}  {_cell(m.mrr):>5}"
+        )
+    if report.errors:
+        lines.append(
+            f"{len(report.errors)} question(s) failed and are left out of these numbers "
+            "(see `errors` in the results file)"
         )
     return "\n".join(lines)
 

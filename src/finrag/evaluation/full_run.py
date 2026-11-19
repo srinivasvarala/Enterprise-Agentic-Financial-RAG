@@ -16,6 +16,7 @@ import argparse
 import json
 import sys
 from collections.abc import Sequence
+from contextlib import suppress
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
@@ -23,8 +24,16 @@ from typing import Any
 
 from finrag.core.config import Settings
 from finrag.core.domain import Principal
-from finrag.evaluation.dry_run import CostCapExceededError, SpendTracker
-from finrag.evaluation.evaluate import EvalPipeline, JudgeFailureRateExceededError, Report, evaluate
+from finrag.evaluation.dry_run import CostCapExceededError, SpendTracker, round_robin
+from finrag.evaluation.evaluate import (
+    EvalPipeline,
+    JudgeFailureRateExceededError,
+    Report,
+    RunState,
+    build_report,
+    evaluate,
+    search_depth,
+)
 from finrag.evaluation.fetch import CACHE_DIR, MANIFEST_PATH
 from finrag.evaluation.fingerprint import (
     DocumentCounter,
@@ -67,6 +76,21 @@ class FullRun:
         return self.generator_usd + self.judge_usd
 
 
+def _cost_record(spend: SpendTracker, cap_usd: float) -> dict[str, Any]:
+    generated, judged = spend.generated(), spend.judged()
+    generator_usd = spend.generator_price.cost_usd(generated)
+    judge_usd = spend.judge_price.cost_usd(judged)
+    return {
+        "cap_usd": cap_usd,
+        "generator_tokens": {"input": generated.input_tokens, "output": generated.output_tokens},
+        "judge_tokens": {"input": judged.input_tokens, "output": judged.output_tokens},
+        "generator_usd": generator_usd,
+        "judge_usd": judge_usd,
+        "total_usd": generator_usd + judge_usd,
+        "note": FALLBACK_NOTE,
+    }
+
+
 def run_full_eval(
     *,
     golden_dir: Path,
@@ -86,13 +110,18 @@ def run_full_eval(
     max_judge_failure_rate: float,
     documents: DocumentCounter | None = None,
 ) -> FullRun:
-    """Refuse without a cap or on a stale index, then answer and judge every question."""
+    """Refuse without a cap or on a stale index, then answer and judge every question.
+
+    Questions run in the dry run's round-robin order. A run that stops (cost cap, judge failure
+    rate, Ctrl-C or any other error) first writes a partial results file, marked `incomplete`,
+    then re-raises with the file's path as a note.
+    """
     if cost_cap_usd is None or cost_cap_usd <= 0:
         raise EvalRefusedError(
             "a per-run cost cap is required and there is no default: pass COST_CAP_USD=<usd> "
             "(make eval COST_CAP_USD=20), a positive amount the owner has approved."
         )
-    golden = load_golden_dir(golden_dir)
+    golden = round_robin(load_golden_dir(golden_dir))
     require_fresh_index(where, settings, counter, documents)
     spend = SpendTracker(
         settings,
@@ -101,39 +130,56 @@ def run_full_eval(
         planned=len(golden.questions),
         cost_cap_usd=cost_cap_usd,
     )
-    report = evaluate(
-        golden,
-        pipeline,
-        principal,
-        judge=judge,
-        after_question=spend.check_cap,
-        max_judge_failure_rate=max_judge_failure_rate,
-    )
-    generated, judged = spend.generated(), spend.judged()
-    generator_usd = spend.generator_price.cost_usd(generated)
-    judge_usd = spend.judge_price.cost_usd(judged)
-    record: dict[str, Any] = results_record(
-        "full",
-        report,
-        where=where,
-        settings=settings,
-        image_digest=image_digest,
-        git_sha=git_sha,
-        now=now,
-    )
-    record["cost"] = {
-        "cap_usd": cost_cap_usd,
-        "generator_tokens": {"input": generated.input_tokens, "output": generated.output_tokens},
-        "judge_tokens": {"input": judged.input_tokens, "output": judged.output_tokens},
-        "generator_usd": generator_usd,
-        "judge_usd": judge_usd,
-        "total_usd": generator_usd + judge_usd,
-        "note": FALLBACK_NOTE,
-    }
+    state = RunState()
+    search_k, evidence_k = search_depth(settings), settings.rerank_top_n
+
+    def record_of(report: Report) -> dict[str, Any]:
+        record: dict[str, Any] = results_record(
+            "full",
+            report,
+            where=where,
+            settings=settings,
+            image_digest=image_digest,
+            git_sha=git_sha,
+            now=now,
+        )
+        record["cost"] = _cost_record(spend, cost_cap_usd)
+        return record
+
+    stamp = f"{now.astimezone(UTC):%Y%m%dT%H%M%SZ}-{git_sha}"
+    try:
+        report = evaluate(
+            golden,
+            pipeline,
+            principal,
+            judge=judge,
+            after_question=spend.check_cap,
+            max_judge_failure_rate=max_judge_failure_rate,
+            state=state,
+            search_k=search_k,
+            evidence_k=evidence_k,
+        )
+    except BaseException as exc:
+        partial = record_of(
+            build_report(state, judge=judge, search_k=search_k, evidence_k=evidence_k)
+        )
+        partial["incomplete"] = {
+            "reason": type(exc).__name__,  # the class only: never a provider's message
+            "questions_completed": len(state.results) + len(state.errors),
+            "questions_total": len(golden.questions),
+        }
+        path = results_dir / f"full-{stamp}-incomplete.json"
+        with suppress(OSError):  # never hide the real error behind a failed write
+            results_dir.mkdir(parents=True, exist_ok=True)
+            path.write_text(json.dumps(partial, indent=2))
+            exc.add_note(f"partial results (incomplete run): {path}")
+        raise
+    record = record_of(report)
     results_dir.mkdir(parents=True, exist_ok=True)
-    path = results_dir / f"full-{now.astimezone(UTC):%Y%m%dT%H%M%SZ}-{git_sha}.json"
+    path = results_dir / f"full-{stamp}.json"
     path.write_text(json.dumps(record, indent=2))
-    return FullRun(path, report, cost_cap_usd, generator_usd, judge_usd)
+    cost = record["cost"]
+    return FullRun(path, report, cost_cap_usd, cost["generator_usd"], cost["judge_usd"])
 
 
 def _cell(value: float | None) -> str:
@@ -251,6 +297,13 @@ def main(argv: Sequence[str] | None = None) -> int:
         JudgeFailureRateExceededError,
     ) as exc:
         print(f"eval refused: {exc}", file=sys.stderr)
+        for note in getattr(exc, "__notes__", []):
+            print(note, file=sys.stderr)
+        return 1
+    except Exception as exc:  # no traceback and no provider text: the class, and the partial file
+        print(f"eval failed: {type(exc).__name__}; see the log for details.", file=sys.stderr)
+        for note in getattr(exc, "__notes__", []):
+            print(note, file=sys.stderr)
         return 1
     print(format_full_summary(run))
     print(f"results: {run.path}")
