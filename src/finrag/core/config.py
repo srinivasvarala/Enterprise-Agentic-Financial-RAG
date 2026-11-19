@@ -5,7 +5,7 @@ from functools import lru_cache
 from typing import Literal
 from uuid import UUID
 
-from pydantic import SecretStr
+from pydantic import SecretStr, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -54,6 +54,15 @@ class Settings(BaseSettings):
     answer_model: str = "claude-sonnet-5-5"
     answer_max_tokens: int = 16000  # thinking tokens count toward this
     answer_timeout_seconds: float = 120.0
+
+    # Evaluation judge (ADR-0010): a stronger, different model than the generator. Prices are USD
+    # per million tokens, from the model table, and feed the eval cost dry run only.
+    judge_model: str = "claude-opus-5-5"
+    judge_max_tokens: int = 16000
+    judge_input_usd_per_mtok: float = 4.0
+    judge_output_usd_per_mtok: float = 20.0
+    answer_input_usd_per_mtok: float = 2.0  # answer_model's price
+    answer_output_usd_per_mtok: float = 10.0
 
     # Which Reranker the composition root wires; `overlap` is an offline stand-in for tests
     reranker_backend: Literal["bge", "overlap"] = "bge"
@@ -105,8 +114,22 @@ class Settings(BaseSettings):
     # will still check.
     min_rerank_score: float = 0.0
 
+    # Provenance of an eval run, passed in by `make eval-retrieval` (the container has no git)
+    eval_image_digest: str = "unknown"
+    eval_git_sha: str = "unknown"
+    # `make eval` refuses to start without a per-run cost cap (USD); deliberately no default
+    eval_cost_cap_usd: float | None = None
+    # Stop `make eval` when more than this fraction of the Golden Set could not be judged
+    eval_max_judge_failure_rate: float = 0.2
+
     # OpenTelemetry (Phoenix locally)
     otel_exporter_endpoint: str = "http://localhost:6006/v1/traces"
+
+    @field_validator("eval_cost_cap_usd", mode="before")
+    @classmethod
+    def _unset_cap_is_none(cls, value: object) -> object:
+        """Compose passes an unset cap as an empty string; that means no cap, not a bad number."""
+        return None if value == "" else value
 
 
 @lru_cache

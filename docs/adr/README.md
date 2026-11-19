@@ -12,6 +12,7 @@
 | [0008](0008-buffer-then-validate-answers.md) | Buffer, validate, then stream; unverifiable answers are refused |
 | [0009](0009-calculation-questions-are-answered.md) | Calculation questions are answered with cited figures; three Refusal reasons |
 | [0010](0010-eval-design.md) | M3 eval design: pinned real filings, span-based gold, trimmed metrics |
+| [0011](0011-render-filings-to-pdf.md) | Render pinned filings to PDF with wkhtmltopdf in the eval image |
 
 New ADRs: copy the shape of an existing one, number sequentially, never edit an accepted ADR's
 decision — supersede it with a new ADR instead.

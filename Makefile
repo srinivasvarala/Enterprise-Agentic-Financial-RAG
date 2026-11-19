@@ -1,5 +1,5 @@
 .DEFAULT_GOAL := help
-.PHONY: help install build up down logs migrate reconcile dev lint fmt test test-int ci eval check-image
+.PHONY: help install build up down logs migrate reconcile dev lint fmt test test-int ci eval eval-fetch eval-render eval-index eval-retrieval eval-dry-run eval-compare eval-bless eval-image check-eval-image check-docker-memory check-image
 
 help: ## list targets
 	@grep -hE '^[a-z-]+:.*## ' $(MAKEFILE_LIST) | awk -F':.*## ' '{printf "  %-10s %s\n", $$1, $$2}'
@@ -57,5 +57,48 @@ ci: ## wait for GitHub CI on the pushed HEAD; non-zero if any job fails (Linux r
 	[ -n "$$id" ] || { echo "No CI run for $$sha: push first"; exit 1; }; \
 	gh run watch $$id --interval 20 --exit-status
 
-eval: ## eval suite (real models, costs money)
-	uv run pytest -m eval evals/
+eval-fetch: ## download the pinned 10-K filings into evals/cache/ and verify checksums (SEC EDGAR)
+	uv run python -m finrag.evaluation.fetch
+
+check-docker-memory: ## refuse when the Docker VM has under 8 GB (eval-index needs it)
+	@uv run python -m finrag.evaluation.resources
+
+eval-image: ## build the Linux `eval` image (app image plus the PDF renderer)
+	docker build --target eval -t finrag-eval:dev .
+
+check-eval-image: eval-image ## prove the renderer works offline and re-renders to the same text
+	docker run --rm --network none -i finrag-eval:dev python - < infra/docker/check_render.py
+
+eval-render: eval-image ## render cached filings to PDF in the eval image, offline; up-to-date PDFs are skipped
+	docker run --rm --network none --user $$(id -u):$$(id -g) -v "$(CURDIR)/evals:/evals" finrag-eval:dev \
+	  python -m finrag.evaluation.render --manifest /evals/manifest.json --cache-dir /evals/cache
+
+eval-index: check-docker-memory eval-image ## ingest the rendered filings into the eval tenant; REBUILD=1 first wipes only the eval namespace (needs `make up`, `make eval-render`; real filings need FINRAG_VOYAGE_API_KEY)
+	mkdir -p evals/results
+	docker compose --profile eval run --rm --no-deps eval-index python -m finrag.evaluation.index \
+	  --manifest /evals/manifest.json --cache-dir /evals/cache $(if $(REBUILD),--rebuild)
+
+eval-retrieval: eval-image ## retrieval-only metrics over the real eval index (needs `make up`, `make eval-index`; embeddings only, no paid answer calls)
+	mkdir -p evals/results
+	FINRAG_EVAL_IMAGE_DIGEST=$$(docker image inspect --format '{{.Id}}' finrag-eval:dev) \
+	FINRAG_EVAL_GIT_SHA=$$(git rev-parse --short HEAD) \
+	docker compose --profile eval run --rm --no-deps eval-retrieval
+
+eval-dry-run: eval-image ## PAID: answer+judge up to 5 questions, print measured tokens and cost (ARGS="--limit 8 --cost-cap-usd 2"; more than 5 needs a cap)
+	docker compose --profile eval run --rm --no-deps eval-dry-run python -m finrag.evaluation.dry_run --golden-dir /evals/golden \
+	  --manifest /evals/manifest.json --cache-dir /evals/cache --results-dir /evals/results $(ARGS)
+
+eval: eval-image ## PAID: full run (retrieval, answers, judge); a cost cap is mandatory: make eval COST_CAP_USD=20
+	@test -n "$(COST_CAP_USD)" || { echo "make eval refused: set a per-run cost cap, e.g. make eval COST_CAP_USD=20 (no default)" >&2; exit 1; }
+	mkdir -p evals/results
+	FINRAG_EVAL_IMAGE_DIGEST=$$(docker image inspect --format '{{.Id}}' finrag-eval:dev) \
+	FINRAG_EVAL_GIT_SHA=$$(git rev-parse --short HEAD) \
+	FINRAG_EVAL_COST_CAP_USD=$(COST_CAP_USD) \
+	docker compose --profile eval run --rm --no-deps eval-full
+
+eval-compare: ## delta of a results file (RESULTS=<file>, default newest) vs evals/baseline.json as a Markdown table; always exits 0
+	uv run python -m finrag.evaluation.compare $(if $(RESULTS),--results $(RESULTS))
+
+eval-bless: ## explicitly make RESULTS=<file> the new evals/baseline.json (ALLOW_RETRIEVAL_ONLY=1 permits a retrieval-only file)
+	@test -n "$(RESULTS)" || { echo "make eval-bless refused: say which run, e.g. RESULTS=evals/results/full-<time>-<sha>.json" >&2; exit 1; }
+	uv run python -m finrag.evaluation.bless $(RESULTS) $(if $(ALLOW_RETRIEVAL_ONLY),--allow-retrieval-only)

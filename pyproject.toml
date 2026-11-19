@@ -41,6 +41,9 @@ dev = [
     "reportlab>=5.1.0",
     "ruff>=0.17.5",
 ]
+evals = [
+    "deepeval>=4.3.4",
+]
 
 # Linux (Docker image, CI) gets CPU-only torch: the default PyPI wheel drags in ~3 GB of CUDA
 # libraries that Docling does not need here. macOS wheels from PyPI are already CPU/MPS.
@@ -72,6 +75,7 @@ ignore = ["S101"]  # assert is fine in tests
 [tool.ruff.lint.per-file-ignores]
 "tests/**" = ["S"]
 "src/finrag/core/config.py" = ["TID251"]  # the one place that reads the environment
+"tests/unit/test_deepeval_judge.py" = ["TID251"]  # asserts the telemetry opt-out in os.environ
 "src/finrag/guardrails/**" = ["TID251"]  # NeMo Guardrails pulls in LangChain (ADR-0004)
 
 [tool.importlinter]

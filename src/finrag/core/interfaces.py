@@ -23,6 +23,9 @@ class BlobStore(Protocol):
 
     def get(self, key: str) -> bytes: ...
 
+    def delete(self, key: str) -> None:
+        """Remove one object. Absent keys are fine."""
+
 
 class JobQueue(Protocol):
     """Enqueues background work. Execution happens in a separate worker process."""
