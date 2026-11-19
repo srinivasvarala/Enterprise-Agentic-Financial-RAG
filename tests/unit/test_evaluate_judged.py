@@ -9,7 +9,7 @@ import json
 import pytest
 from test_evaluate import PRINCIPAL, World, question, span, unanswerable
 
-from finrag.evaluation.evaluate import evaluate
+from finrag.evaluation.evaluate import JudgeFailureRateExceededError, evaluate
 from finrag.evaluation.golden import GoldenSet, Question
 from finrag.evaluation.judge import JudgeCase, JudgeScores
 
@@ -19,12 +19,19 @@ class FakeJudge:
 
     model_id = "fake-judge"
 
-    def __init__(self, scores: dict[str, JudgeScores] | None = None) -> None:
+    def __init__(
+        self,
+        scores: dict[str, JudgeScores] | None = None,
+        fail: dict[str, Exception] | None = None,
+    ) -> None:
         self.scores = scores or {}
+        self.fail = fail or {}
         self.cases: list[JudgeCase] = []
 
     def judge(self, case: JudgeCase) -> JudgeScores:
         self.cases.append(case)
+        if case.question in self.fail:
+            raise self.fail[case.question]
         return self.scores.get(case.question, JudgeScores(1.0, 1.0, 1.0))
 
 
@@ -67,6 +74,7 @@ def test_each_judged_metric_maps_into_the_judged_section_of_the_report() -> None
             "faithfulness": 0.9,
             "answer_relevancy": 0.8,
             "answer_correctness": 0.7,
+            "error": None,
         }
     ]
 
@@ -152,3 +160,61 @@ def test_the_after_question_hook_runs_once_per_question_and_may_stop_the_run() -
         evaluate(golden, world.pipeline, PRINCIPAL, after_question=stop_after_first)
 
     assert seen == [1]
+
+
+class ProviderDownError(Exception):
+    pass
+
+
+def three_questions() -> GoldenSet:
+    return GoldenSet(
+        tuple(question(f"q{n}", span("Net sales were 100 billion")) for n in (1, 2, 3))
+    )
+
+
+def test_a_judge_failure_on_one_question_is_recorded_and_the_run_continues() -> None:
+    judge = FakeJudge(fail={"question q2?": ProviderDownError("401 sk-ant-SECRET rejected")})
+
+    report = evaluate(three_questions(), judged_world().pipeline, PRINCIPAL, judge=judge)
+
+    assert len(report.questions) == 3
+    assert len(judge.cases) == 3  # q3 was still judged after q2 failed
+    judged = report.judged
+    assert judged is not None
+    failed = judged.questions[1]
+    assert (failed.id, failed.faithfulness, failed.answer_correctness) == ("q2", None, None)
+    assert failed.error == "ProviderDownError"
+    assert "SECRET" not in report.to_json()  # the class name only, never the provider message
+    assert judged.not_judged == 1
+    assert judged.overall.scored == 2
+    assert judged.overall.faithfulness == 1.0  # the mean skips the failed question
+
+
+def test_too_many_judge_failures_stop_the_run_with_a_clear_message() -> None:
+    judge = FakeJudge(fail={f"question q{n}?": ProviderDownError("x") for n in (1, 2, 3)})
+
+    with pytest.raises(JudgeFailureRateExceededError, match=r"2 of 3.*judge"):
+        evaluate(
+            three_questions(),
+            judged_world().pipeline,
+            PRINCIPAL,
+            judge=judge,
+            max_judge_failure_rate=0.5,
+        )
+
+    assert len(judge.cases) == 2  # stopped as soon as the second failure passed half of 3
+
+
+def test_failures_at_exactly_the_allowed_fraction_do_not_stop_the_run() -> None:
+    judge = FakeJudge(fail={"question q1?": ProviderDownError("x")})
+
+    report = evaluate(
+        three_questions(),
+        judged_world().pipeline,
+        PRINCIPAL,
+        judge=judge,
+        max_judge_failure_rate=1 / 3,
+    )
+
+    assert report.judged is not None
+    assert report.judged.not_judged == 1

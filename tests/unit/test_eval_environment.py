@@ -100,7 +100,7 @@ def test_require_eval_settings_accepts_the_eval_profile_settings() -> None:
     )
 
 
-@pytest.mark.parametrize("name", ["eval-index", "eval-retrieval"])
+@pytest.mark.parametrize("name", ["eval-index", "eval-retrieval", "eval-full"])
 def test_the_compose_eval_profile_matches_the_eval_environment_and_is_memory_capped(
     name: str,
 ) -> None:
@@ -116,7 +116,7 @@ def test_the_compose_eval_profile_matches_the_eval_environment_and_is_memory_cap
     assert env["FINRAG_QDRANT_COLLECTION"] == EVAL_QDRANT_COLLECTION
     assert env["FINRAG_S3_BUCKET"] == EVAL_S3_BUCKET
     # no other service is part of the profile: the dev stack is untouched by `--profile eval`
-    eval_services = ("eval-index", "eval-dry-run", "eval-retrieval")
+    eval_services = ("eval-index", "eval-dry-run", "eval-retrieval", "eval-full")
     others = [n for n in compose["services"] if n not in eval_services]
     assert all("profiles" not in compose["services"][n] for n in others)
     # the dry run reads and writes only the eval Tenant, Collection and collections too
@@ -124,3 +124,17 @@ def test_the_compose_eval_profile_matches_the_eval_environment_and_is_memory_cap
     assert dry_run["profiles"] == ["eval"]
     assert dry_run["environment"]["FINRAG_DEFAULT_TENANT_ID"] == str(EVAL_TENANT_ID)
     assert dry_run["environment"]["FINRAG_QDRANT_COLLECTION"] == EVAL_QDRANT_COLLECTION
+
+
+def test_the_full_eval_service_passes_the_keys_through_and_mounts_results_writable() -> None:
+    compose = yaml.safe_load((REPO_ROOT / "docker-compose.yml").read_text())
+    service = compose["services"]["eval-full"]
+
+    env = service["environment"]
+    assert (
+        env["FINRAG_ANTHROPIC_API_KEY"] == "${FINRAG_ANTHROPIC_API_KEY:-}"
+    )  # host env, no literal
+    assert env["FINRAG_VOYAGE_API_KEY"] == "${FINRAG_VOYAGE_API_KEY:-}"
+    assert env["FINRAG_EVAL_COST_CAP_USD"] == "${FINRAG_EVAL_COST_CAP_USD:-}"  # no default cap
+    assert "./evals/results:/evals/results" in service["volumes"]
+    assert "finrag.evaluation.full_run" in service["command"]

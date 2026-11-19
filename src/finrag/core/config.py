@@ -5,7 +5,7 @@ from functools import lru_cache
 from typing import Literal
 from uuid import UUID
 
-from pydantic import SecretStr
+from pydantic import SecretStr, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -117,9 +117,19 @@ class Settings(BaseSettings):
     # Provenance of an eval run, passed in by `make eval-retrieval` (the container has no git)
     eval_image_digest: str = "unknown"
     eval_git_sha: str = "unknown"
+    # `make eval` refuses to start without a per-run cost cap (USD); deliberately no default
+    eval_cost_cap_usd: float | None = None
+    # Stop `make eval` when more than this fraction of the Golden Set could not be judged
+    eval_max_judge_failure_rate: float = 0.2
 
     # OpenTelemetry (Phoenix locally)
     otel_exporter_endpoint: str = "http://localhost:6006/v1/traces"
+
+    @field_validator("eval_cost_cap_usd", mode="before")
+    @classmethod
+    def _unset_cap_is_none(cls, value: object) -> object:
+        """Compose passes an unset cap as an empty string; that means no cap, not a bad number."""
+        return None if value == "" else value
 
 
 @lru_cache

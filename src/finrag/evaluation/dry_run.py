@@ -113,6 +113,56 @@ def _delta(source: UsageSource, before: TokenUsage) -> TokenUsage:
     )
 
 
+class SpendTracker:
+    """Measured spend of a run so far, and the cap rule shared by the dry run and `make eval`.
+
+    Cost is the tokens the two models reported times the `Settings` prices. After each question
+    the whole-run projection (mean cost per question so far, times the questions planned) is
+    compared with the cap, so a run stops before it has spent much past what it was allowed.
+    """
+
+    def __init__(
+        self,
+        settings: Settings,
+        generator_usage: UsageSource,
+        judge_usage: UsageSource,
+        *,
+        planned: int,
+        cost_cap_usd: float | None,
+    ) -> None:
+        self.generator_price = Price(
+            settings.answer_input_usd_per_mtok, settings.answer_output_usd_per_mtok
+        )
+        self.judge_price = Price(
+            settings.judge_input_usd_per_mtok, settings.judge_output_usd_per_mtok
+        )
+        self._generator_usage, self._judge_usage = generator_usage, judge_usage
+        self._generator_before, self._judge_before = generator_usage.usage(), judge_usage.usage()
+        self._planned = planned
+        self._cap = cost_cap_usd
+
+    def generated(self) -> TokenUsage:
+        return _delta(self._generator_usage, self._generator_before)
+
+    def judged(self) -> TokenUsage:
+        return _delta(self._judge_usage, self._judge_before)
+
+    def spent_usd(self) -> float:
+        return self.generator_price.cost_usd(self.generated()) + self.judge_price.cost_usd(
+            self.judged()
+        )
+
+    def check_cap(self, done: int) -> None:
+        if self._cap is None:
+            return
+        so_far = self.spent_usd()
+        projected = so_far / done * self._planned
+        if projected > self._cap:
+            raise CostCapExceededError(
+                questions_run=done, spent_usd=so_far, projected_usd=projected, cap_usd=self._cap
+            )
+
+
 def run_dry_run(
     golden: GoldenSet,
     pipeline: EvalPipeline,
@@ -136,29 +186,19 @@ def run_dry_run(
             "supply a per-run cost cap (--cost-cap-usd) the owner has approved."
         )
     sample = _sample(golden, limit)
-    generator_price = Price(settings.answer_input_usd_per_mtok, settings.answer_output_usd_per_mtok)
-    judge_price = Price(settings.judge_input_usd_per_mtok, settings.judge_output_usd_per_mtok)
-    generator_before, judge_before = generator_usage.usage(), judge_usage.usage()
     planned = len(sample.questions)
+    spend = SpendTracker(
+        settings,
+        generator_usage,
+        judge_usage,
+        planned=planned,
+        cost_cap_usd=cost_cap_usd,
+    )
 
-    def spent() -> float:
-        return generator_price.cost_usd(
-            _delta(generator_usage, generator_before)
-        ) + judge_price.cost_usd(_delta(judge_usage, judge_before))
+    evaluate(sample, pipeline, principal, judge=judge, after_question=spend.check_cap)
 
-    def check_cap(done: int) -> None:
-        if cost_cap_usd is None:
-            return
-        so_far = spent()
-        projected = so_far / done * planned
-        if projected > cost_cap_usd:
-            raise CostCapExceededError(
-                questions_run=done, spent_usd=so_far, projected_usd=projected, cap_usd=cost_cap_usd
-            )
-
-    evaluate(sample, pipeline, principal, judge=judge, after_question=check_cap)
-
-    generated, judged = _delta(generator_usage, generator_before), _delta(judge_usage, judge_before)
+    generated, judged = spend.generated(), spend.judged()
+    generator_price, judge_price = spend.generator_price, spend.judge_price
     total = generator_price.cost_usd(generated) + judge_price.cost_usd(judged)
     return DryRunReport(
         questions_run=planned,
