@@ -176,3 +176,12 @@ def test_judge_token_usage_is_what_the_library_model_reported() -> None:
     usage = judge.usage()
 
     assert (usage.input_tokens, usage.output_tokens) == (150, 25)
+
+
+def test_the_adapter_builds_over_the_real_library_without_calling_a_model() -> None:
+    pytest.importorskip("deepeval")  # only in the `evals` dependency group
+
+    judge = DeepEvalJudge(settings(anthropic_api_key="sk-not-a-real-key"))
+
+    assert judge.model_id == "claude-opus-5-5"
+    assert judge.usage().input_tokens == 0

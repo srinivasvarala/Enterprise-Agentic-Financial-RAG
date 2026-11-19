@@ -7,6 +7,7 @@ telemetry is opted out: filing text and questions must never be reported anywher
 import importlib
 import os
 from collections.abc import Callable
+from types import SimpleNamespace
 from typing import Any
 
 from finrag.core.config import Settings
@@ -30,9 +31,19 @@ def opt_out_of_telemetry() -> None:
 
 
 def load_deepeval() -> Any:
-    """Import the library, opting out of telemetry first."""
+    """Import the library's classes into one namespace, opting out of telemetry first."""
     opt_out_of_telemetry()
-    return importlib.import_module("deepeval")  # needs `uv sync --group evals`
+    models = importlib.import_module("deepeval.models")  # needs `uv sync --group evals`
+    metrics = importlib.import_module("deepeval.metrics")
+    cases = importlib.import_module("deepeval.test_case")
+    return SimpleNamespace(
+        AnthropicModel=models.AnthropicModel,
+        FaithfulnessMetric=metrics.FaithfulnessMetric,
+        AnswerRelevancyMetric=metrics.AnswerRelevancyMetric,
+        GEval=metrics.GEval,
+        LLMTestCase=cases.LLMTestCase,
+        SingleTurnParams=cases.SingleTurnParams,
+    )
 
 
 class DeepEvalJudge:

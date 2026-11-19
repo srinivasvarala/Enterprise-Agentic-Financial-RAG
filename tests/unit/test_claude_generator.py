@@ -84,7 +84,8 @@ def test_a_reply_that_is_not_json_is_a_model_output_error() -> None:
 
 
 def test_a_reply_with_no_text_is_a_model_output_error() -> None:
-    empty = SimpleNamespace(content=[], stop_reason="end_turn")
+    usage = SimpleNamespace(input_tokens=0, output_tokens=0)
+    empty = SimpleNamespace(content=[], stop_reason="end_turn", usage=usage)
 
     with pytest.raises(ModelOutputError):
         generator(FakeClient(empty)).generate("q", (CHUNK,))
