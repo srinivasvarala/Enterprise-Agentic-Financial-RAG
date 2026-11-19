@@ -1,5 +1,5 @@
 .DEFAULT_GOAL := help
-.PHONY: help install build up down logs migrate reconcile dev lint fmt test test-int ci eval eval-fetch eval-render eval-index eval-dry-run eval-image check-eval-image check-image
+.PHONY: help install build up down logs migrate reconcile dev lint fmt test test-int ci eval eval-fetch eval-render eval-index eval-dry-run eval-image check-eval-image check-docker-memory check-image
 
 help: ## list targets
 	@grep -hE '^[a-z-]+:.*## ' $(MAKEFILE_LIST) | awk -F':.*## ' '{printf "  %-10s %s\n", $$1, $$2}'
@@ -60,6 +60,9 @@ ci: ## wait for GitHub CI on the pushed HEAD; non-zero if any job fails (Linux r
 eval-fetch: ## download the pinned 10-K filings into evals/cache/ and verify checksums (SEC EDGAR)
 	uv run python -m finrag.evaluation.fetch
 
+check-docker-memory: ## refuse when the Docker VM has under 8 GB (eval-index needs it)
+	@uv run python -m finrag.evaluation.resources
+
 eval-image: ## build the Linux `eval` image (app image plus the PDF renderer)
 	docker build --target eval -t finrag-eval:dev .
 
@@ -70,7 +73,8 @@ eval-render: eval-image ## render cached filings to PDF in the eval image, offli
 	docker run --rm --network none --user $$(id -u):$$(id -g) -v "$(CURDIR)/evals:/evals" finrag-eval:dev \
 	  python -m finrag.evaluation.render --manifest /evals/manifest.json --cache-dir /evals/cache
 
-eval-index: eval-image ## ingest the rendered filings into the eval tenant (needs `make up`, `make eval-render`; real filings need FINRAG_VOYAGE_API_KEY)
+eval-index: check-docker-memory eval-image ## ingest the rendered filings into the eval tenant (needs `make up`, `make eval-render`; real filings need FINRAG_VOYAGE_API_KEY)
+	mkdir -p evals/results
 	docker compose --profile eval run --rm --no-deps eval-index
 
 eval-dry-run: eval-image ## PAID: answer+judge up to 5 questions, print measured tokens and cost (ARGS="--limit 8 --cost-cap-usd 2"; more than 5 needs a cap)
