@@ -15,8 +15,12 @@ from test_evaluate_judged import FlakyPipeline
 
 from finrag.core.config import Settings
 from finrag.core.errors import TransientError
+from finrag.evaluation.bless import BlessRefusedError, bless
 from finrag.evaluation.dry_run import CostCapExceededError
-from finrag.evaluation.evaluate import JudgeFailureRateExceededError
+from finrag.evaluation.evaluate import (
+    JudgeFailureRateExceededError,
+    QuestionFailureRateExceededError,
+)
 from finrag.evaluation.fingerprint import IndexLocations, StaleIndexError, record_index
 from finrag.evaluation.full_run import (
     EvalRefusedError,
@@ -275,3 +279,20 @@ def test_the_results_record_the_depths_the_recalls_were_measured_at(rig: Rig) ->
         data["report"]["search_k"] == rig.settings.retrieve_dense_k + rig.settings.retrieve_sparse_k
     )
     assert data["report"]["evidence_k"] == rig.settings.rerank_top_n
+
+
+def test_a_run_where_every_question_errors_stops_with_an_incomplete_file(rig: Rig) -> None:
+    down = TransientError("503 from https://api.example/secret")
+    flaky = FlakyPipeline(rig.world.pipeline, {f"question q{n}?": down for n in range(3)})
+
+    with pytest.raises(QuestionFailureRateExceededError, match="questions failed"):
+        rig.run(pipeline=flaky, max_judge_failure_rate=0.2)
+
+    (partial_path,) = rig.results_dir.glob("full-*.json")
+    assert partial_path.name.endswith("-incomplete.json")
+    partial = json.loads(partial_path.read_text())
+    assert partial["incomplete"]["reason"] == "QuestionFailureRateExceededError"
+    assert partial["report"]["errors"][0]["error"] == "TransientError"
+    assert "api.example" not in partial_path.read_text()
+    with pytest.raises(BlessRefusedError, match="incomplete"):
+        bless(partial_path, rig.results_dir / "baseline.json")

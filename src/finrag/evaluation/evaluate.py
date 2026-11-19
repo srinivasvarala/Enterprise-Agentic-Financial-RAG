@@ -41,6 +41,18 @@ def search_depth(settings: Settings) -> int:
     return settings.retrieve_dense_k + settings.retrieve_sparse_k
 
 
+class QuestionFailureRateExceededError(Exception):
+    """Too many questions failed in the pipeline for the run's metrics to mean anything."""
+
+    def __init__(self, *, errors: int, questions: int, allowed_rate: float) -> None:
+        super().__init__(
+            f"stopped: {errors} of {questions} questions failed (a provider error), over the "
+            f"allowed {allowed_rate:.0%}. Check the providers and the keys, then rerun."
+        )
+        self.errors = errors
+        self.questions = questions
+
+
 @dataclass(frozen=True, slots=True)
 class PipelineResult:
     trace: RetrievalTrace
@@ -304,6 +316,7 @@ def evaluate(
     judge: Judge | None = None,
     after_question: Callable[[int], None] | None = None,
     max_judge_failure_rate: float = 1.0,
+    max_question_error_rate: float = 1.0,
     state: RunState | None = None,
     search_k: int = SEARCH_K,
     evidence_k: int = EVIDENCE_K,
@@ -317,6 +330,8 @@ def evaluate(
     A question the pipeline fails on (a provider error) is recorded as an error, with the
     exception class only, and left out of every metric; the run goes on. A judge failure on one
     question is recorded (null scores, the error class) and the run goes on; once failures exceed
+    `max_question_error_rate` of the Golden Set the run stops with
+    `QuestionFailureRateExceededError`. Judge failures are counted against
     `max_judge_failure_rate` of the questions eligible for judging (answerable and answered, as
     far as the run has seen) the run stops.
     """
@@ -328,6 +343,12 @@ def evaluate(
             result = pipeline.run(principal, q.question, answer=not retrieval_only)
         except Exception as exc:  # a provider failure on this question; only the class is kept
             state.errors.append(QuestionError(q.id, q.category, type(exc).__name__))
+            if len(state.errors) / len(golden.questions) > max_question_error_rate:
+                raise QuestionFailureRateExceededError(
+                    errors=len(state.errors),
+                    questions=len(golden.questions),
+                    allowed_rate=max_question_error_rate,
+                ) from None
             if q.gold_spans:
                 state.not_judgeable += 1
         else:

@@ -28,6 +28,7 @@ from finrag.evaluation.dry_run import CostCapExceededError, SpendTracker, round_
 from finrag.evaluation.evaluate import (
     EvalPipeline,
     JudgeFailureRateExceededError,
+    QuestionFailureRateExceededError,
     Report,
     RunState,
     build_report,
@@ -155,6 +156,7 @@ def run_full_eval(
             judge=judge,
             after_question=spend.check_cap,
             max_judge_failure_rate=max_judge_failure_rate,
+            max_question_error_rate=max_judge_failure_rate,
             state=state,
             search_k=search_k,
             evidence_k=evidence_k,
@@ -295,6 +297,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         StaleIndexError,
         CostCapExceededError,
         JudgeFailureRateExceededError,
+        QuestionFailureRateExceededError,
     ) as exc:
         print(f"eval refused: {exc}", file=sys.stderr)
         for note in getattr(exc, "__notes__", []):

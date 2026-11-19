@@ -234,6 +234,7 @@ def run_dry_run(
         judge=judge,
         after_question=spend.check_cap,
         max_judge_failure_rate=max_judge_failure_rate,
+        max_question_error_rate=max_judge_failure_rate,
         search_k=search_depth(settings),
         evidence_k=settings.rerank_top_n,
     )
@@ -276,7 +277,11 @@ def main(argv: list[str] | None = None) -> int:
         eval_principal,
         require_eval_settings,
     )
-    from finrag.evaluation.evaluate import EvaluationPipeline, JudgeFailureRateExceededError
+    from finrag.evaluation.evaluate import (
+        EvaluationPipeline,
+        JudgeFailureRateExceededError,
+        QuestionFailureRateExceededError,
+    )
     from finrag.evaluation.fetch import CACHE_DIR, MANIFEST_PATH
     from finrag.evaluation.fingerprint import (
         IndexLocations,
@@ -339,6 +344,7 @@ def main(argv: list[str] | None = None) -> int:
         DryRunRefusedError,
         CostCapExceededError,
         JudgeFailureRateExceededError,
+        QuestionFailureRateExceededError,
         EvalEnvironmentError,
         NoGoldenSetError,
         GoldenSetError,

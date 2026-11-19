@@ -15,6 +15,7 @@ from finrag.evaluation.evaluate import (
     EvalPipeline,
     JudgeFailureRateExceededError,
     PipelineResult,
+    QuestionFailureRateExceededError,
     evaluate,
 )
 from finrag.evaluation.golden import GoldenSet, Question
@@ -302,3 +303,22 @@ def test_a_search_depth_smaller_than_the_candidates_limits_recall_at_100() -> No
 
     assert deep.overall.recall_at_100 == 1.0
     assert shallow.overall.recall_at_100 == 0.0
+
+
+def test_too_many_errored_questions_stop_the_run() -> None:
+    down = TransientError("provider outage")
+    pipeline = FlakyPipeline(judged_world().pipeline, {f"question q{n}?": down for n in (1, 2, 3)})
+
+    with pytest.raises(QuestionFailureRateExceededError, match=r"2 of 3 questions") as stopped:
+        evaluate(three_questions(), pipeline, PRINCIPAL, max_question_error_rate=0.5)
+
+    assert pipeline.asked == 2  # stopped as soon as the second error passed half of 3
+    assert "outage" not in str(stopped.value)
+
+
+def test_errors_at_or_below_the_allowed_share_do_not_stop_the_run() -> None:
+    pipeline = FlakyPipeline(judged_world().pipeline, {"question q1?": TransientError("x")})
+
+    report = evaluate(three_questions(), pipeline, PRINCIPAL, max_question_error_rate=1 / 3)
+
+    assert len(report.errors) == 1 and len(report.questions) == 2
