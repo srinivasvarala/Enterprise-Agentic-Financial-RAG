@@ -1,6 +1,5 @@
 """Seam S3: fetch the manifest's Filings into a cache through a fake HTTP client."""
 
-import hashlib
 import itertools
 import re
 from collections.abc import Mapping
@@ -13,6 +12,7 @@ from finrag.evaluation.fetch import (
     MANIFEST_PATH,
     ChecksumMismatchError,
     ManifestEntry,
+    canonical_sha256,
     fetch_filings,
     load_manifest,
 )
@@ -50,7 +50,8 @@ def entry(company: str, body: bytes) -> ManifestEntry:
         form="10-K",
         accession_number=f"0000000000-25-{len(company):06d}",
         url=f"https://sec.example/{company.lower()}.htm",
-        sha256=hashlib.sha256(body).hexdigest(),
+        canonicalisation=1,
+        canonical_sha256=canonical_sha256(body),
     )
 
 
@@ -61,7 +62,8 @@ def test_the_committed_manifest_pins_the_five_company_filings() -> None:
     assert {e.form for e in entries} == {"10-K"}
     for e in entries:
         assert re.fullmatch(r"\d{10}-\d{2}-\d{6}", e.accession_number)
-        assert re.fullmatch(r"[0-9a-f]{64}", e.sha256)
+        assert re.fullmatch(r"[0-9a-f]{64}", e.canonical_sha256)
+        assert e.canonicalisation == 1
         assert e.url.startswith("https://www.sec.gov/Archives/edgar/data/")
         assert e.accession_number.replace("-", "") in e.url
 
@@ -129,4 +131,58 @@ def test_refuses_a_checksum_mismatch_naming_the_filing_and_keeps_it_out_of_the_c
 
     assert "Acme" in str(caught.value)
     assert pinned.accession_number in str(caught.value)
+    assert list(tmp_path.iterdir()) == []
+
+
+def page(token: str, body_text: str = "revenue 100") -> bytes:
+    return (
+        f"<html><body><p>{body_text}</p>"
+        f'<script type="text/javascript">var t="{token}";</script></body></html>'
+    ).encode()
+
+
+def test_bodies_differing_only_in_the_trailing_token_both_verify(tmp_path: Path) -> None:
+    clock = FakeClock()
+    acme = entry("Acme", page("aaaaaaaaa"))
+    http = FakeHttp({acme.url: page("bbbbbbbbb")}, clock)
+
+    fetch_filings([acme], tmp_path, http, clock=clock.monotonic, sleep=clock.sleep)
+
+    # kept byte-for-byte as served, not canonicalised
+    assert (tmp_path / f"{acme.accession_number}.htm").read_bytes() == page("bbbbbbbbb")
+
+
+def test_a_cached_filing_with_a_different_trailing_token_is_not_downloaded_again(
+    tmp_path: Path,
+) -> None:
+    clock = FakeClock()
+    acme = entry("Acme", page("aaaaaaaaa"))
+    (tmp_path / f"{acme.accession_number}.htm").write_bytes(page("ccccccccc"))
+    http = FakeHttp({}, clock)
+
+    fetch_filings([acme], tmp_path, http, clock=clock.monotonic, sleep=clock.sleep)
+
+    assert http.requests == []
+
+
+@pytest.mark.parametrize(
+    "served",
+    [
+        page("aaaaaaaaa", body_text="revenue 101"),  # real content changed
+        page("aaaaaaaaa").replace(b"<html>", b"<html><!-- x -->"),  # change elsewhere
+        b'<html><body><script>early()</script><p>revenue 100</p><script>t="a";</script>'
+        b"</body></html>",  # a script that is not the trailing one
+    ],
+)
+def test_a_change_anywhere_but_the_trailing_token_fails_naming_the_filing(
+    tmp_path: Path, served: bytes
+) -> None:
+    clock = FakeClock()
+    acme = entry("Acme", page("aaaaaaaaa"))
+    http = FakeHttp({acme.url: served}, clock)
+
+    with pytest.raises(ChecksumMismatchError) as caught:
+        fetch_filings([acme], tmp_path, http, clock=clock.monotonic, sleep=clock.sleep)
+
+    assert "Acme" in str(caught.value)
     assert list(tmp_path.iterdir()) == []
