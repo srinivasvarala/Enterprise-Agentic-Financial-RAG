@@ -139,6 +139,35 @@ services:
     mem_limit: 6g
     restart: "no"
 
+  # Eval cost dry run (`make eval-dry-run`, profile `eval`): PAID calls to the answer and judge
+  # models, at most five questions unless a cost cap is passed. Needs FINRAG_ANTHROPIC_API_KEY, the
+  # built eval index (`make eval-index`) and the stack up; run it with `--no-deps`.
+  eval-dry-run:
+    <<: *app
+    build:
+      context: .
+      target: eval
+    image: finrag-eval:dev
+    profiles: [eval]
+    environment:
+      <<: *app-env
+      FINRAG_DEFAULT_TENANT_ID: "00000000-0000-4000-8000-0000000000e1"
+      FINRAG_DEFAULT_COLLECTION_ID: "00000000-0000-4000-8000-0000000000e2"
+      FINRAG_QDRANT_COLLECTION: finrag_eval_chunks
+      FINRAG_S3_BUCKET: finrag-eval-documents
+    depends_on:
+      postgres:
+        condition: service_healthy
+      qdrant:
+        condition: service_healthy
+      seaweedfs:
+        condition: service_healthy
+    volumes:
+      - ./evals:/evals:ro
+    command: ["python", "-m", "finrag.evaluation.dry_run", "--golden-dir", "/evals/golden"]
+    mem_limit: 6g
+    restart: "no"
+
 volumes:
   postgres-data:
   qdrant-data:

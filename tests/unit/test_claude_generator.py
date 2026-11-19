@@ -9,7 +9,7 @@ import anthropic
 import httpx2
 import pytest
 
-from finrag.core.domain import DraftAnswer, DraftCitation, EvidenceChunk
+from finrag.core.domain import DraftAnswer, DraftCitation, EvidenceChunk, TokenUsage
 from finrag.core.errors import ModelOutputError, TransientError
 from finrag.generation.claude import ClaudeAnswerGenerator
 
@@ -31,9 +31,10 @@ class FakeClient:
         return self.outcome
 
 
-def reply(text: str, stop_reason: str = "end_turn") -> object:
+def reply(text: str, stop_reason: str = "end_turn", tokens: tuple[int, int] = (0, 0)) -> object:
     block = SimpleNamespace(type="text", text=text)
-    return SimpleNamespace(content=[block], stop_reason=stop_reason)
+    usage = SimpleNamespace(input_tokens=tokens[0], output_tokens=tokens[1])
+    return SimpleNamespace(content=[block], stop_reason=stop_reason, usage=usage)
 
 
 def generator(client: FakeClient) -> ClaudeAnswerGenerator:
@@ -83,7 +84,8 @@ def test_a_reply_that_is_not_json_is_a_model_output_error() -> None:
 
 
 def test_a_reply_with_no_text_is_a_model_output_error() -> None:
-    empty = SimpleNamespace(content=[], stop_reason="end_turn")
+    usage = SimpleNamespace(input_tokens=0, output_tokens=0)
+    empty = SimpleNamespace(content=[], stop_reason="end_turn", usage=usage)
 
     with pytest.raises(ModelOutputError):
         generator(FakeClient(empty)).generate("q", (CHUNK,))
@@ -120,3 +122,23 @@ def test_retryable_provider_failures_become_transient_errors_without_provider_de
 def test_a_non_retryable_provider_error_is_not_swallowed() -> None:
     with pytest.raises(anthropic.APIStatusError):
         generator(FakeClient(status_error(401))).generate("q", (CHUNK,))
+
+
+def test_it_counts_the_tokens_the_api_reports_across_calls() -> None:
+    client = FakeClient(reply(GOOD, tokens=(1200, 300)))
+    claude = generator(client)
+
+    claude.generate("How much cash?", (CHUNK,))
+    claude.generate("How much cash?", (CHUNK,))
+
+    assert claude.usage() == TokenUsage(2400, 600)
+
+
+def test_a_reply_that_is_rejected_after_the_call_is_still_counted() -> None:
+    client = FakeClient(reply("not json", tokens=(500, 50)))
+    claude = generator(client)
+
+    with pytest.raises(ModelOutputError):
+        claude.generate("How much cash?", (CHUNK,))
+
+    assert claude.usage() == TokenUsage(500, 50)  # the tokens were billed either way
