@@ -100,9 +100,12 @@ def test_require_eval_settings_accepts_the_eval_profile_settings() -> None:
     )
 
 
-def test_the_compose_eval_profile_matches_the_eval_environment_and_is_memory_capped() -> None:
+@pytest.mark.parametrize("name", ["eval-index", "eval-retrieval"])
+def test_the_compose_eval_profile_matches_the_eval_environment_and_is_memory_capped(
+    name: str,
+) -> None:
     compose = yaml.safe_load((REPO_ROOT / "docker-compose.yml").read_text())
-    service = compose["services"]["eval-index"]
+    service = compose["services"][name]
 
     assert service["profiles"] == ["eval"]
     assert service["build"]["target"] == "eval"
@@ -113,7 +116,7 @@ def test_the_compose_eval_profile_matches_the_eval_environment_and_is_memory_cap
     assert env["FINRAG_QDRANT_COLLECTION"] == EVAL_QDRANT_COLLECTION
     assert env["FINRAG_S3_BUCKET"] == EVAL_S3_BUCKET
     # no other service is part of the profile: the dev stack is untouched by `--profile eval`
-    eval_services = ("eval-index", "eval-dry-run")
+    eval_services = ("eval-index", "eval-dry-run", "eval-retrieval")
     others = [n for n in compose["services"] if n not in eval_services]
     assert all("profiles" not in compose["services"][n] for n in others)
     # the dry run reads and writes only the eval Tenant, Collection and collections too

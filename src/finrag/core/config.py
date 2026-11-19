@@ -114,6 +114,10 @@ class Settings(BaseSettings):
     # will still check.
     min_rerank_score: float = 0.0
 
+    # Provenance of an eval run, passed in by `make eval-retrieval` (the container has no git)
+    eval_image_digest: str = "unknown"
+    eval_git_sha: str = "unknown"
+
     # OpenTelemetry (Phoenix locally)
     otel_exporter_endpoint: str = "http://localhost:6006/v1/traces"
 
