@@ -22,6 +22,18 @@ SEARCH_K = 100  # recall@100: the candidates before the rerank
 ANSWERED = "answered"
 
 
+class JudgeFailureRateExceededError(Exception):
+    """Too many questions could not be judged for the run's scores to mean anything."""
+
+    def __init__(self, *, failures: int, questions: int, allowed_rate: float) -> None:
+        super().__init__(
+            f"stopped: the judge failed on {failures} of {questions} questions, over the "
+            f"allowed {allowed_rate:.0%}. Check the judge model and the Anthropic key, then rerun."
+        )
+        self.failures = failures
+        self.questions = questions
+
+
 @dataclass(frozen=True, slots=True)
 class PipelineResult:
     trace: RetrievalTrace
@@ -94,6 +106,7 @@ class JudgedQuestion:
     faithfulness: float | None
     answer_relevancy: float | None
     answer_correctness: float | None
+    error: str | None = None  # the exception class when the judge failed; never its message
 
 
 @dataclass(frozen=True, slots=True)
@@ -111,6 +124,7 @@ class JudgedSection:
     """Judged answer quality: only answered, answerable questions are judged."""
 
     judge_model: str
+    not_judged: int  # answered, answerable questions whose judging failed
     overall: JudgedMetrics
     by_category: dict[str, JudgedMetrics]
     questions: tuple[JudgedQuestion, ...]
@@ -201,7 +215,7 @@ def _judge_case(q: Question, result: PipelineResult) -> JudgeCase | None:
 
 def _judged_metrics(items: Sequence[JudgedQuestion]) -> JudgedMetrics:
     return JudgedMetrics(
-        scored=len(items),
+        scored=sum(1 for i in items if i.error is None),
         faithfulness=_mean([i.faithfulness for i in items]),
         answer_relevancy=_mean([i.answer_relevancy for i in items]),
         answer_correctness=_mean([i.answer_correctness for i in items]),
@@ -214,6 +228,7 @@ def _judged_section(judge: Judge, items: Sequence[JudgedQuestion]) -> JudgedSect
         groups[item.category].append(item)
     return JudgedSection(
         judge_model=judge.model_id,
+        not_judged=sum(1 for i in items if i.error is not None),
         overall=_judged_metrics(items),
         by_category={c: _judged_metrics(g) for c, g in sorted(groups.items())},
         questions=tuple(items),
@@ -228,12 +243,16 @@ def evaluate(
     retrieval_only: bool = False,
     judge: Judge | None = None,
     after_question: Callable[[int], None] | None = None,
+    max_judge_failure_rate: float = 1.0,
 ) -> Report:
     """Ask every question through the pipeline; report overall, per category and per question.
 
     A retrieval-only run never calls the generator or the judge, so the answer and judged metrics
     are None. `after_question(done)` runs after each question; it may raise to stop the run (the
     cost dry run does, when projected spend passes its cap).
+
+    A judge failure on one question is recorded (null scores, the error class) and the run goes
+    on; once failures exceed `max_judge_failure_rate` of the Golden Set the run stops.
     """
     results: list[QuestionResult] = []
     judged: list[JudgedQuestion] = []
@@ -242,16 +261,29 @@ def evaluate(
         results.append(_evaluate_question(q, result))
         case = _judge_case(q, result) if judge is not None else None
         if judge is not None and case is not None:
-            scores: JudgeScores = judge.judge(case)
-            judged.append(
-                JudgedQuestion(
-                    q.id,
-                    q.category,
-                    scores.faithfulness,
-                    scores.answer_relevancy,
-                    scores.answer_correctness,
+            try:
+                scores: JudgeScores = judge.judge(case)
+            except Exception as exc:  # any provider failure; only the class is kept
+                judged.append(
+                    JudgedQuestion(q.id, q.category, None, None, None, type(exc).__name__)
                 )
-            )
+                failures = sum(1 for j in judged if j.error is not None)
+                if failures / len(golden.questions) > max_judge_failure_rate:
+                    raise JudgeFailureRateExceededError(
+                        failures=failures,
+                        questions=len(golden.questions),
+                        allowed_rate=max_judge_failure_rate,
+                    ) from None
+            else:
+                judged.append(
+                    JudgedQuestion(
+                        q.id,
+                        q.category,
+                        scores.faithfulness,
+                        scores.answer_relevancy,
+                        scores.answer_correctness,
+                    )
+                )
         if after_question is not None:
             after_question(done)
     groups: dict[str, list[QuestionResult]] = defaultdict(list)

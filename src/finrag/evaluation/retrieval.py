@@ -16,6 +16,7 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
+from typing import Any
 
 from finrag.core.config import Settings
 from finrag.core.domain import Principal
@@ -62,6 +63,36 @@ def load_golden_dir(golden_dir: Path) -> GoldenSet:
     return GoldenSet(tuple(questions))
 
 
+def results_record(
+    kind: str,
+    report: Report,
+    *,
+    where: IndexLocations,
+    settings: Settings,
+    image_digest: str,
+    git_sha: str,
+    now: datetime,
+) -> dict[str, Any]:
+    """The results file body shared by the retrieval-only and the full run. Holds no secret."""
+    return {
+        "run": {
+            "kind": kind,
+            "started_at": now.isoformat(),
+            "git_sha": git_sha,
+            "image_digest": image_digest,
+        },
+        "models": {
+            "embedder": settings.voyage_model,
+            "sparse": settings.fastembed_bm25_model,
+            "reranker": settings.reranker_model,
+            "answer": settings.answer_model,
+            "judge": settings.judge_model,
+        },
+        "index": json.loads(where.index_record.read_text()),
+        "report": report.to_dict(),
+    }
+
+
 def run_retrieval_eval(
     *,
     golden_dir: Path,
@@ -79,23 +110,15 @@ def run_retrieval_eval(
     golden = load_golden_dir(golden_dir)
     require_fresh_index(where, settings, counter)
     report = evaluate(golden, pipeline, principal, retrieval_only=True)
-    record = {
-        "run": {
-            "kind": "retrieval",
-            "started_at": now.isoformat(),
-            "git_sha": git_sha,
-            "image_digest": image_digest,
-        },
-        "models": {
-            "embedder": settings.voyage_model,
-            "sparse": settings.fastembed_bm25_model,
-            "reranker": settings.reranker_model,
-            "answer": settings.answer_model,
-            "judge": settings.judge_model,
-        },
-        "index": json.loads(where.index_record.read_text()),
-        "report": report.to_dict(),
-    }
+    record = results_record(
+        "retrieval",
+        report,
+        where=where,
+        settings=settings,
+        image_digest=image_digest,
+        git_sha=git_sha,
+        now=now,
+    )
     results_dir.mkdir(parents=True, exist_ok=True)
     path = results_dir / f"retrieval-{now.astimezone(UTC):%Y%m%dT%H%M%SZ}-{git_sha}.json"
     path.write_text(json.dumps(record, indent=2))

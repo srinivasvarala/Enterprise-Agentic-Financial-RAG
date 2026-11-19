@@ -1,5 +1,5 @@
 .DEFAULT_GOAL := help
-.PHONY: help install build up down logs migrate reconcile dev lint fmt test test-int ci eval eval-fetch eval-render eval-index eval-retrieval eval-dry-run eval-image check-eval-image check-docker-memory check-image
+.PHONY: help install build up down logs migrate reconcile dev lint fmt test test-int ci eval eval-fetch eval-render eval-index eval-retrieval eval-dry-run eval-compare eval-bless eval-image check-eval-image check-docker-memory check-image
 
 help: ## list targets
 	@grep -hE '^[a-z-]+:.*## ' $(MAKEFILE_LIST) | awk -F':.*## ' '{printf "  %-10s %s\n", $$1, $$2}'
@@ -86,5 +86,17 @@ eval-retrieval: eval-image ## retrieval-only metrics over the real eval index (n
 eval-dry-run: eval-image ## PAID: answer+judge up to 5 questions, print measured tokens and cost (ARGS="--limit 8 --cost-cap-usd 2"; more than 5 needs a cap)
 	docker compose --profile eval run --rm --no-deps eval-dry-run python -m finrag.evaluation.dry_run --golden-dir /evals/golden $(ARGS)
 
-eval: ## eval suite (real models, costs money)
-	uv run pytest -m eval evals/
+eval: eval-image ## PAID: full run (retrieval, answers, judge); a cost cap is mandatory: make eval COST_CAP_USD=20
+	@test -n "$(COST_CAP_USD)" || { echo "make eval refused: set a per-run cost cap, e.g. make eval COST_CAP_USD=20 (no default)" >&2; exit 1; }
+	mkdir -p evals/results
+	FINRAG_EVAL_IMAGE_DIGEST=$$(docker image inspect --format '{{.Id}}' finrag-eval:dev) \
+	FINRAG_EVAL_GIT_SHA=$$(git rev-parse --short HEAD) \
+	FINRAG_EVAL_COST_CAP_USD=$(COST_CAP_USD) \
+	docker compose --profile eval run --rm --no-deps eval-full
+
+eval-compare: ## delta of a results file (RESULTS=<file>, default newest) vs evals/baseline.json as a Markdown table; always exits 0
+	uv run python -m finrag.evaluation.compare $(if $(RESULTS),--results $(RESULTS))
+
+eval-bless: ## explicitly make RESULTS=<file> the new evals/baseline.json (ALLOW_RETRIEVAL_ONLY=1 permits a retrieval-only file)
+	@test -n "$(RESULTS)" || { echo "make eval-bless refused: say which run, e.g. RESULTS=evals/results/full-<time>-<sha>.json" >&2; exit 1; }
+	uv run python -m finrag.evaluation.bless $(RESULTS) $(if $(ALLOW_RETRIEVAL_ONLY),--allow-retrieval-only)
