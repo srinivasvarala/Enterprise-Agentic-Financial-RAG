@@ -79,11 +79,17 @@ def test_index_build_ingests_the_fixture_once_and_keeps_it_from_the_default_tena
     assert document.status == "ready"
     assert document.chunk_count > 0
 
-    settings = eval_container.settings
+    # other integration tests put documents in the default tenant of the shared database, so
+    # assert on the eval document's own chunks rather than on emptiness
+    eval_chunks = service.list_chunks(eval_principal(), document.id, limit=100, offset=0)
+    assert eval_chunks is not None
+    eval_chunk_ids = {c.id for c in eval_chunks.items}
     default = Principal(Settings().default_tenant_id, Settings().default_collection_id)
-    assert service.list_documents(default) == []
+    assert document.id not in {d.id for d in service.list_documents(default)}
+    assert service.list_chunks(default, document.id, limit=100, offset=0) is None
     retriever = eval_container.retriever()
     question = "Total net sales by segment"
-    assert retriever.retrieve(eval_principal(), question)  # searchable in the eval tenant
-    assert retriever.retrieve(default, question) == ()  # and invisible to the default tenant
-    assert settings.qdrant_collection.startswith("finrag_test_")  # never the real eval collection
+    found = {c.chunk_id for c in retriever.retrieve(eval_principal(), question)}
+    assert found and found <= eval_chunk_ids  # searchable, and only eval chunks come back
+    leaked = {c.chunk_id for c in retriever.retrieve(default, question)} & eval_chunk_ids
+    assert leaked == set()  # invisible to the default tenant
