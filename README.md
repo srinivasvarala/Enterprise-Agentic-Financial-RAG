@@ -96,12 +96,14 @@ documents and the eval's never mix (ADR-0010). With the stack up (`make up`):
 make eval-fetch    # download the filings (SEC EDGAR)
 make eval-render   # render them to PDF in the eval image, offline
 make eval-index    # ingest the PDFs into the eval tenant; a second run adds nothing
+                   # (after a re-render: make eval-index REBUILD=1, which wipes only the eval namespace)
 ```
 
 `make eval-index` ingests the smallest PDF first and prints each filing's duration and peak
 memory. The real filings need `FINRAG_VOYAGE_API_KEY` (in `.env` or the host environment; the offline
 hash backends would make the index meaningless) and a Docker VM with at least
-6 GB of memory; the container itself is capped at 6 GB. The judged metrics later need
+8 GB of memory (decimal; `make eval-index` refuses to start below it); the container itself is
+capped at 6 GB. The judged metrics later need
 `FINRAG_ANTHROPIC_API_KEY`. The judge library (DeepEval) is installed only in the `eval` image.
 
 ### Running the API outside Docker

@@ -6,6 +6,7 @@ from pathlib import Path
 
 import pytest
 
+from finrag.evaluation import render
 from finrag.evaluation.fetch import ManifestEntry
 from finrag.evaluation.render import RENDER_RECORD_NAME, MissingFilingError, render_filings
 
@@ -129,3 +130,48 @@ def test_a_failed_render_leaves_no_pdf_that_counts_as_up_to_date(tmp_path: Path)
     again = FakeRenderer()
     render_filings(entries, tmp_path, again, pages_of)
     assert len(again.calls) == 1
+
+
+def test_main_with_a_missing_manifest_names_the_manifest_not_the_renderer(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    code = render.main(["--manifest", str(tmp_path / "nope.json"), "--cache-dir", str(tmp_path)])
+
+    err = capsys.readouterr().err
+    assert code == 1
+    assert "nope.json" in err and "does not exist" in err
+    assert "renderer is not installed" not in err
+
+
+def test_main_without_the_renderer_installed_says_so(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    manifest = tmp_path / "manifest.json"
+    manifest.write_text("[]")
+    monkeypatch.setattr(render.shutil, "which", lambda name: None)
+
+    code = render.main(["--manifest", str(manifest), "--cache-dir", str(tmp_path)])
+
+    assert code == 1
+    assert "renderer is not installed" in capsys.readouterr().err
+
+
+def test_main_with_another_missing_file_names_that_path(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    manifest = tmp_path / "manifest.json"
+    manifest.write_text("[]")
+    monkeypatch.setattr(render.shutil, "which", lambda name: "/usr/bin/wkhtmltopdf")
+
+    def boom(*args: object, **kwargs: object) -> None:
+        raise FileNotFoundError(2, "No such file", "/evals/cache/x.html")
+
+    monkeypatch.setattr(render, "WkhtmltopdfRenderer", lambda: object())
+    monkeypatch.setattr(render, "render_filings", boom)
+
+    code = render.main(["--manifest", str(manifest), "--cache-dir", str(tmp_path)])
+
+    err = capsys.readouterr().err
+    assert code == 1
+    assert "/evals/cache/x.html does not exist" in err
+    assert "renderer is not installed" not in err
