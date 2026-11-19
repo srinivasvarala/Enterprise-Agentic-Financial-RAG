@@ -177,6 +177,19 @@ class Citation:
 
 
 @dataclass(frozen=True, slots=True)
+class TokenUsage:
+    """Tokens a model reported using; additive, so a run's total is a sum."""
+
+    input_tokens: int = 0
+    output_tokens: int = 0
+
+    def __add__(self, other: "TokenUsage") -> "TokenUsage":
+        return TokenUsage(
+            self.input_tokens + other.input_tokens, self.output_tokens + other.output_tokens
+        )
+
+
+@dataclass(frozen=True, slots=True)
 class Answer:
     """A validated Answer, or a Refusal when `refusal_reason` is set."""
 

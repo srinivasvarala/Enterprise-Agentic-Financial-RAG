@@ -75,6 +75,7 @@ ignore = ["S101"]  # assert is fine in tests
 [tool.ruff.lint.per-file-ignores]
 "tests/**" = ["S"]
 "src/finrag/core/config.py" = ["TID251"]  # the one place that reads the environment
+"tests/unit/test_deepeval_judge.py" = ["TID251"]  # asserts the telemetry opt-out in os.environ
 "src/finrag/guardrails/**" = ["TID251"]  # NeMo Guardrails pulls in LangChain (ADR-0004)
 
 [tool.importlinter]

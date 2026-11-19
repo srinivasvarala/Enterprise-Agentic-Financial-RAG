@@ -6,13 +6,14 @@ A Refusal with reason `insufficient_evidence` is the right outcome for an unansw
 
 import json
 from collections import defaultdict
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from dataclasses import asdict, dataclass
 from typing import Any, Protocol
 
 from finrag.core.domain import Answer, EvidenceChunk, Principal, RefusalReason
 from finrag.core.interfaces import AnswerGenerator
 from finrag.evaluation.golden import GoldenSet, GoldSpan, Question, is_hit
+from finrag.evaluation.judge import Judge, JudgeCase, JudgeScores
 from finrag.generation.service import AnswerService
 from finrag.retrieval.retriever import RetrievalTrace, Retriever
 
@@ -87,10 +88,40 @@ class Metrics:
 
 
 @dataclass(frozen=True, slots=True)
+class JudgedQuestion:
+    id: str
+    category: str
+    faithfulness: float | None
+    answer_relevancy: float | None
+    answer_correctness: float | None
+
+
+@dataclass(frozen=True, slots=True)
+class JudgedMetrics:
+    """Mean judged scores over the questions scored; a measure is None if no score exists."""
+
+    scored: int
+    faithfulness: float | None
+    answer_relevancy: float | None
+    answer_correctness: float | None
+
+
+@dataclass(frozen=True, slots=True)
+class JudgedSection:
+    """Judged answer quality: only answered, answerable questions are judged."""
+
+    judge_model: str
+    overall: JudgedMetrics
+    by_category: dict[str, JudgedMetrics]
+    questions: tuple[JudgedQuestion, ...]
+
+
+@dataclass(frozen=True, slots=True)
 class Report:
     overall: Metrics
     by_category: dict[str, Metrics]
     questions: tuple[QuestionResult, ...]
+    judged: JudgedSection | None = None  # None when no judge ran
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -155,26 +186,80 @@ def _metrics(results: Sequence[QuestionResult]) -> Metrics:
     )
 
 
+def _judge_case(q: Question, result: PipelineResult) -> JudgeCase | None:
+    """What to judge: an answered, answerable question. A Refusal has no answer to score."""
+    answer = result.answer
+    if answer is None or answer.refusal_reason is not None or not q.gold_spans:
+        return None
+    return JudgeCase(
+        question=q.question,
+        answer=answer.text,
+        reference_answer=q.reference_answer,
+        evidence=tuple(c.text for c in result.trace.evidence),
+    )
+
+
+def _judged_metrics(items: Sequence[JudgedQuestion]) -> JudgedMetrics:
+    return JudgedMetrics(
+        scored=len(items),
+        faithfulness=_mean([i.faithfulness for i in items]),
+        answer_relevancy=_mean([i.answer_relevancy for i in items]),
+        answer_correctness=_mean([i.answer_correctness for i in items]),
+    )
+
+
+def _judged_section(judge: Judge, items: Sequence[JudgedQuestion]) -> JudgedSection:
+    groups: dict[str, list[JudgedQuestion]] = defaultdict(list)
+    for item in items:
+        groups[item.category].append(item)
+    return JudgedSection(
+        judge_model=judge.model_id,
+        overall=_judged_metrics(items),
+        by_category={c: _judged_metrics(g) for c, g in sorted(groups.items())},
+        questions=tuple(items),
+    )
+
+
 def evaluate(
     golden: GoldenSet,
     pipeline: EvalPipeline,
     principal: Principal,
     *,
     retrieval_only: bool = False,
+    judge: Judge | None = None,
+    after_question: Callable[[int], None] | None = None,
 ) -> Report:
     """Ask every question through the pipeline; report overall, per category and per question.
 
-    A retrieval-only run never calls the generator, so the answer metrics are None.
+    A retrieval-only run never calls the generator or the judge, so the answer and judged metrics
+    are None. `after_question(done)` runs after each question; it may raise to stop the run (the
+    cost dry run does, when projected spend passes its cap).
     """
-    results = tuple(
-        _evaluate_question(q, pipeline.run(principal, q.question, answer=not retrieval_only))
-        for q in golden.questions
-    )
+    results: list[QuestionResult] = []
+    judged: list[JudgedQuestion] = []
+    for done, q in enumerate(golden.questions, start=1):
+        result = pipeline.run(principal, q.question, answer=not retrieval_only)
+        results.append(_evaluate_question(q, result))
+        case = _judge_case(q, result) if judge is not None else None
+        if judge is not None and case is not None:
+            scores: JudgeScores = judge.judge(case)
+            judged.append(
+                JudgedQuestion(
+                    q.id,
+                    q.category,
+                    scores.faithfulness,
+                    scores.answer_relevancy,
+                    scores.answer_correctness,
+                )
+            )
+        if after_question is not None:
+            after_question(done)
     groups: dict[str, list[QuestionResult]] = defaultdict(list)
     for r in results:
         groups[r.category].append(r)
     return Report(
         overall=_metrics(results),
         by_category={c: _metrics(rs) for c, rs in sorted(groups.items())},
-        questions=results,
+        questions=tuple(results),
+        judged=_judged_section(judge, judged) if judge is not None and not retrieval_only else None,
     )

@@ -55,6 +55,15 @@ class Settings(BaseSettings):
     answer_max_tokens: int = 16000  # thinking tokens count toward this
     answer_timeout_seconds: float = 120.0
 
+    # Evaluation judge (ADR-0010): a stronger, different model than the generator. Prices are USD
+    # per million tokens, from the model table, and feed the eval cost dry run only.
+    judge_model: str = "claude-opus-5-5"
+    judge_max_tokens: int = 16000
+    judge_input_usd_per_mtok: float = 4.0
+    judge_output_usd_per_mtok: float = 20.0
+    answer_input_usd_per_mtok: float = 2.0  # answer_model's price
+    answer_output_usd_per_mtok: float = 10.0
+
     # Which Reranker the composition root wires; `overlap` is an offline stand-in for tests
     reranker_backend: Literal["bge", "overlap"] = "bge"
     reranker_model: str = "BAAI/bge-reranker-base"  # downloaded on first use

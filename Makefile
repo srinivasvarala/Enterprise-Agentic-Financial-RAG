@@ -1,5 +1,5 @@
 .DEFAULT_GOAL := help
-.PHONY: help install build up down logs migrate reconcile dev lint fmt test test-int ci eval eval-fetch eval-render eval-index eval-image check-eval-image check-image
+.PHONY: help install build up down logs migrate reconcile dev lint fmt test test-int ci eval eval-fetch eval-render eval-index eval-dry-run eval-image check-eval-image check-image
 
 help: ## list targets
 	@grep -hE '^[a-z-]+:.*## ' $(MAKEFILE_LIST) | awk -F':.*## ' '{printf "  %-10s %s\n", $$1, $$2}'
@@ -72,6 +72,9 @@ eval-render: eval-image ## render cached filings to PDF in the eval image, offli
 
 eval-index: eval-image ## ingest the rendered filings into the eval tenant (needs `make up`, `make eval-render`; real filings need FINRAG_VOYAGE_API_KEY)
 	docker compose --profile eval run --rm --no-deps eval-index
+
+eval-dry-run: eval-image ## PAID: answer+judge up to 5 questions, print measured tokens and cost (ARGS="--limit 8 --cost-cap-usd 2"; more than 5 needs a cap)
+	docker compose --profile eval run --rm --no-deps eval-dry-run python -m finrag.evaluation.dry_run --golden-dir /evals/golden $(ARGS)
 
 eval: ## eval suite (real models, costs money)
 	uv run pytest -m eval evals/
