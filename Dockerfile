@@ -58,6 +58,16 @@ USER root
 RUN apt-get update \
     && apt-get install -y --no-install-recommends wkhtmltopdf=0.12.6-2+b1 fonts-liberation \
     && rm -rf /var/lib/apt/lists/*
+# The judge library (the `evals` dependency group, ADR-0010) is installed here and nowhere else.
+# uv syncs the existing venv in place, so this layer holds only the added packages.
+COPY --from=builder /usr/local/bin/uv /usr/local/bin/uv
+COPY pyproject.toml uv.lock ./
+COPY src ./src
+RUN --mount=type=cache,target=/root/.cache/uv \
+    UV_PROJECT_ENVIRONMENT=/app/.venv UV_COMPILE_BYTECODE=1 UV_LINK_MODE=copy \
+    UV_PYTHON_DOWNLOADS=never UV_NO_DEV=1 \
+    uv sync --locked --no-editable --group evals \
+    && rm -rf /app/pyproject.toml /app/uv.lock /usr/local/bin/uv
 USER finrag
 
 # ---- runtime: the default target, identical to app-base ----

@@ -143,6 +143,11 @@ def build_ingestion_pipeline(settings: Settings) -> IngestionPipeline:
     return _build(settings, _NoQueue()).ingestion_pipeline()
 
 
+def build_queueless_container(settings: Settings) -> Container:
+    """Container for in-process ingestion (the eval index build): no Procrastinate, no worker."""
+    return _build(settings, _NoQueue())
+
+
 class _NoQueue:
     def enqueue_ingestion(self, job: IngestionJob) -> bool:
         raise RuntimeError("this container has no job queue")

@@ -1,5 +1,5 @@
 .DEFAULT_GOAL := help
-.PHONY: help install build up down logs migrate reconcile dev lint fmt test test-int ci eval eval-fetch eval-render eval-image check-eval-image check-image
+.PHONY: help install build up down logs migrate reconcile dev lint fmt test test-int ci eval eval-fetch eval-render eval-index eval-image check-eval-image check-image
 
 help: ## list targets
 	@grep -hE '^[a-z-]+:.*## ' $(MAKEFILE_LIST) | awk -F':.*## ' '{printf "  %-10s %s\n", $$1, $$2}'
@@ -69,6 +69,9 @@ check-eval-image: eval-image ## prove the renderer works offline and re-renders 
 eval-render: eval-image ## render cached filings to PDF in the eval image, offline; up-to-date PDFs are skipped
 	docker run --rm --network none --user $$(id -u):$$(id -g) -v "$(CURDIR)/evals:/evals" finrag-eval:dev \
 	  python -m finrag.evaluation.render --manifest /evals/manifest.json --cache-dir /evals/cache
+
+eval-index: eval-image ## ingest the rendered filings into the eval tenant (needs `make up`, `make eval-render`; real filings need FINRAG_VOYAGE_API_KEY)
+	docker compose --profile eval run --rm --no-deps eval-index
 
 eval: ## eval suite (real models, costs money)
 	uv run pytest -m eval evals/
