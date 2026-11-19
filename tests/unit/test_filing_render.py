@@ -34,7 +34,8 @@ def entry(accession: str, body: bytes) -> ManifestEntry:
         form="10-K",
         accession_number=accession,
         url=f"https://example.test/{accession}.htm",
-        sha256=hashlib.sha256(body).hexdigest(),
+        canonicalisation=1,
+        canonical_sha256=hashlib.sha256(body).hexdigest(),
     )
 
 
