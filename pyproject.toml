@@ -41,6 +41,9 @@ dev = [
     "reportlab>=5.1.0",
     "ruff>=0.17.5",
 ]
+evals = [
+    "deepeval>=4.3.4",
+]
 
 # Linux (Docker image, CI) gets CPU-only torch: the default PyPI wheel drags in ~3 GB of CUDA
 # libraries that Docling does not need here. macOS wheels from PyPI are already CPU/MPS.
