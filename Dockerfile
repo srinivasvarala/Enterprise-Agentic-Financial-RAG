@@ -28,8 +28,8 @@ RUN --mount=type=cache,target=/hf-cache \
     && cp -r /hf-cache/hf /opt/models/hf \
     && cp -r /hf-cache/fastembed /opt/models/fastembed
 
-# ---- runtime ----
-FROM ${PYTHON_IMAGE} AS runtime
+# ---- app-base: everything the runtime image holds; `eval` extends it ----
+FROM ${PYTHON_IMAGE} AS app-base
 # libgomp: torch/onnxruntime OpenMP; libglib2.0: OpenCV (Docling); curl: container healthchecks
 RUN apt-get update \
     && apt-get install -y --no-install-recommends libgomp1 libglib2.0-0 curl \
@@ -48,3 +48,17 @@ ENV PATH=/app/.venv/bin:$PATH \
 USER finrag
 EXPOSE 8000
 CMD ["uvicorn", "finrag.api.app:app", "--host", "0.0.0.0", "--port", "8000"]
+
+# ---- eval: app-base plus the PDF renderer for the eval corpus (ADR-0011); never the default ----
+# Build with `docker build --target eval`. Declared before `runtime` because the last stage is the
+# default build target and must stay the runtime image.
+FROM app-base AS eval
+USER root
+# Pinned to the Debian bookworm package; libraries and fonts come in as its dependencies.
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends wkhtmltopdf=0.12.6-2+b1 fonts-liberation \
+    && rm -rf /var/lib/apt/lists/*
+USER finrag
+
+# ---- runtime: the default target, identical to app-base ----
+FROM app-base AS runtime

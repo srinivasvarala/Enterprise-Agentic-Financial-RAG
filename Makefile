@@ -1,5 +1,5 @@
 .DEFAULT_GOAL := help
-.PHONY: help install build up down logs migrate reconcile dev lint fmt test test-int ci eval eval-fetch check-image
+.PHONY: help install build up down logs migrate reconcile dev lint fmt test test-int ci eval eval-fetch eval-render eval-image check-eval-image check-image
 
 help: ## list targets
 	@grep -hE '^[a-z-]+:.*## ' $(MAKEFILE_LIST) | awk -F':.*## ' '{printf "  %-10s %s\n", $$1, $$2}'
@@ -59,6 +59,16 @@ ci: ## wait for GitHub CI on the pushed HEAD; non-zero if any job fails (Linux r
 
 eval-fetch: ## download the pinned 10-K filings into evals/cache/ and verify checksums (SEC EDGAR)
 	uv run python -m finrag.evaluation.fetch
+
+eval-image: ## build the Linux `eval` image (app image plus the PDF renderer)
+	docker build --target eval -t finrag-eval:dev .
+
+check-eval-image: eval-image ## prove the renderer works offline and re-renders to the same text
+	docker run --rm --network none -i finrag-eval:dev python - < infra/docker/check_render.py
+
+eval-render: eval-image ## render cached filings to PDF in the eval image, offline; up-to-date PDFs are skipped
+	docker run --rm --network none --user $$(id -u):$$(id -g) -v "$(CURDIR)/evals:/evals" finrag-eval:dev \
+	  python -m finrag.evaluation.render --manifest /evals/manifest.json --cache-dir /evals/cache
 
 eval: ## eval suite (real models, costs money)
 	uv run pytest -m eval evals/
