@@ -152,11 +152,11 @@ def _page_text(document: ParsedDocument, page: int) -> str:
             parts.extend(p for p in (block.caption, block.header, block.markdown) if p)
         else:
             parts.append(block.text)
-    return _normalise(" ".join(parts))
+    return "\n".join(parts)  # newlines kept: a table row is one line
 
 
 def _pages_text(document: ParsedDocument, start: int, end: int) -> str:
-    return " ".join(_page_text(document, page) for page in range(start, end + 1))
+    return "\n".join(_page_text(document, page) for page in range(start, end + 1))
 
 
 def _describe(span: GoldSpan) -> str:
@@ -189,10 +189,37 @@ def check_golden_set(golden: GoldenSet, documents: Mapping[str, ParsedDocument])
 
 
 def is_hit(span: GoldSpan, chunk_text: str) -> bool:
-    text = _normalise(chunk_text)
+    """A text Gold Span is a Hit when the chunk contains it. A table Gold Span is a Hit when one
+    row of a Markdown table in the chunk holds both its row label and its figure."""
     if isinstance(span, TextSpan):
-        return _normalise(span.text) in text
-    return _normalise(span.row_label).lower() in text.lower() and _normalise(span.figure) in text
+        return _normalise(span.text) in _normalise(chunk_text)
+    label, figure = _normalise(span.row_label).lower(), _normalise(span.figure)
+    for line in chunk_text.splitlines():
+        row = _normalise(line)
+        if row.startswith("|") and label in row.lower() and figure in row:
+            return True
+    return False
 
 
-__all__: Sequence[str] = ["GoldenSetError", "check_golden_set", "is_hit", "load_golden_set"]
+def is_citation_hit(span: GoldSpan, quoted_span: str) -> bool:
+    """Does a citation's quote support the Gold Span?
+
+    Yes when the quote contains the whole span (`is_hit`), or, for a text span, when the quote is
+    a verbatim part of the span and at least half its length: a correct but shorter quote still
+    cites the right passage, while a few words that happen to occur in the span do not.
+    """
+    if is_hit(span, quoted_span):
+        return True
+    if not isinstance(span, TextSpan):
+        return False
+    quote, whole = _normalise(quoted_span), _normalise(span.text)
+    return bool(quote) and quote in whole and len(quote) * 2 >= len(whole)
+
+
+__all__: Sequence[str] = [
+    "GoldenSetError",
+    "check_golden_set",
+    "is_citation_hit",
+    "is_hit",
+    "load_golden_set",
+]

@@ -9,7 +9,15 @@ import json
 import pytest
 from test_evaluate import PRINCIPAL, World, question, span, unanswerable
 
-from finrag.evaluation.evaluate import JudgeFailureRateExceededError, evaluate
+from finrag.core.domain import Principal
+from finrag.core.errors import TransientError
+from finrag.evaluation.evaluate import (
+    EvalPipeline,
+    JudgeFailureRateExceededError,
+    PipelineResult,
+    QuestionFailureRateExceededError,
+    evaluate,
+)
 from finrag.evaluation.golden import GoldenSet, Question
 from finrag.evaluation.judge import JudgeCase, JudgeScores
 
@@ -218,3 +226,99 @@ def test_failures_at_exactly_the_allowed_fraction_do_not_stop_the_run() -> None:
 
     assert report.judged is not None
     assert report.judged.not_judged == 1
+
+
+class FlakyPipeline:
+    """Fails (like a provider outage) on the questions named, otherwise delegates."""
+
+    def __init__(self, inner: EvalPipeline, fail: dict[str, Exception]) -> None:
+        self.inner, self.fail, self.asked = inner, fail, 0
+
+    def run(self, principal: Principal, question: str, *, answer: bool) -> PipelineResult:
+        self.asked += 1
+        if question in self.fail:
+            raise self.fail[question]
+        return self.inner.run(principal, question, answer=answer)
+
+
+def test_a_provider_error_on_one_question_is_recorded_and_left_out_of_the_metrics() -> None:
+    pipeline = FlakyPipeline(
+        judged_world().pipeline, {"question q2?": TransientError("503 sk-ant-SECRET at http://x")}
+    )
+
+    report = evaluate(three_questions(), pipeline, PRINCIPAL, judge=FakeJudge())
+
+    assert pipeline.asked == 3  # the run went on after q2
+    assert [q.id for q in report.questions] == ["q1", "q3"]
+    assert [(e.id, e.error) for e in report.errors] == [("q2", "TransientError")]
+    assert report.overall.questions == 2  # excluded from every metric
+    assert report.overall.recall_at_8 == 1.0
+    assert "SECRET" not in report.to_json() and "http" not in report.to_json()
+
+
+def test_an_unexpected_error_on_one_question_is_recorded_the_same_way() -> None:
+    pipeline = FlakyPipeline(judged_world().pipeline, {"question q1?": KeyError("boom")})
+
+    report = evaluate(three_questions(), pipeline, PRINCIPAL, retrieval_only=True)
+
+    assert [(e.id, e.error) for e in report.errors] == [("q1", "KeyError")]
+    assert len(report.questions) == 2
+
+
+def test_the_judge_failure_rate_is_measured_over_the_questions_eligible_for_judging() -> None:
+    world = judged_world()
+    golden = GoldenSet(
+        (
+            question("q1", span("Net sales were 100 billion")),
+            question("q2", span("Net sales were 100 billion")),
+            unanswerable("u1"),
+            unanswerable("u2"),
+        )
+    )
+    judge = FakeJudge(fail={f"question q{n}?": ProviderDownError("x") for n in (1, 2)})
+
+    # 2 failures of 4 questions is not over 50%, but of the 2 judged-eligible ones it is 100%
+    with pytest.raises(JudgeFailureRateExceededError, match=r"2 of 2"):
+        evaluate(golden, world.pipeline, PRINCIPAL, judge=judge, max_judge_failure_rate=0.5)
+
+
+def test_the_report_records_the_search_and_evidence_depth_it_was_measured_at() -> None:
+    golden = GoldenSet((question("q1", span("Net sales were 100 billion")),))
+
+    report = evaluate(
+        golden, judged_world().pipeline, PRINCIPAL, search_k=40, evidence_k=5, retrieval_only=True
+    )
+
+    data = json.loads(report.to_json())
+    assert (data["search_k"], data["evidence_k"]) == (40, 5)
+
+
+def test_a_search_depth_smaller_than_the_candidates_limits_recall_at_100() -> None:
+    world = judged_world()
+    for n in range(5):
+        world.index(f"filler passage {n} about leases", score=0.9)
+    golden = GoldenSet((question("q1", span("Net sales were 100 billion")),))
+    deep = evaluate(golden, world.pipeline, PRINCIPAL, retrieval_only=True, search_k=100)
+    shallow = evaluate(golden, world.pipeline, PRINCIPAL, retrieval_only=True, search_k=0)
+
+    assert deep.overall.recall_at_100 == 1.0
+    assert shallow.overall.recall_at_100 == 0.0
+
+
+def test_too_many_errored_questions_stop_the_run() -> None:
+    down = TransientError("provider outage")
+    pipeline = FlakyPipeline(judged_world().pipeline, {f"question q{n}?": down for n in (1, 2, 3)})
+
+    with pytest.raises(QuestionFailureRateExceededError, match=r"2 of 3 questions") as stopped:
+        evaluate(three_questions(), pipeline, PRINCIPAL, max_question_error_rate=0.5)
+
+    assert pipeline.asked == 2  # stopped as soon as the second error passed half of 3
+    assert "outage" not in str(stopped.value)
+
+
+def test_errors_at_or_below_the_allowed_share_do_not_stop_the_run() -> None:
+    pipeline = FlakyPipeline(judged_world().pipeline, {"question q1?": TransientError("x")})
+
+    report = evaluate(three_questions(), pipeline, PRINCIPAL, max_question_error_rate=1 / 3)
+
+    assert len(report.errors) == 1 and len(report.questions) == 2

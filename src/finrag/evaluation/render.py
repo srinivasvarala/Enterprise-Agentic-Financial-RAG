@@ -10,6 +10,7 @@ import argparse
 import hashlib
 import json
 import resource
+import shutil
 import subprocess
 import sys
 import time
@@ -169,20 +170,31 @@ def main(argv: Sequence[str] | None = None) -> int:
         )
 
     try:
+        entries = load_manifest(args.manifest)
+    except FileNotFoundError:
+        print(
+            f"eval-render refused: the manifest {args.manifest} does not exist; "
+            "pass --manifest, or run `make eval-render` from the repository root.",
+            file=sys.stderr,
+        )
+        return 1
+    if shutil.which(WKHTMLTOPDF) is None:
+        print(
+            "eval-render refused: the renderer is not installed here; "
+            "run it through `make eval-render`, which uses the `eval` image.",
+            file=sys.stderr,
+        )
+        return 1
+    try:
         render_filings(
-            load_manifest(args.manifest),
-            args.cache_dir,
-            WkhtmltopdfRenderer(),
-            count_pages,
-            on_rendered=report,
+            entries, args.cache_dir, WkhtmltopdfRenderer(), count_pages, on_rendered=report
         )
     except (MissingFilingError, RenderError) as exc:
         print(f"eval-render refused: {exc}", file=sys.stderr)
         return 1
-    except FileNotFoundError:
+    except FileNotFoundError as exc:  # neither the manifest nor the renderer: name the path
         print(
-            "eval-render refused: the renderer is not installed here; "
-            "run it through `make eval-render`, which uses the `eval` image.",
+            f"eval-render refused: {exc.filename} does not exist; run `make eval-fetch` first.",
             file=sys.stderr,
         )
         return 1

@@ -17,6 +17,9 @@ class InMemoryBlobStore:
     def get(self, key: str) -> bytes:
         return self.objects[key]
 
+    def delete(self, key: str) -> None:
+        self.objects.pop(key, None)
+
 
 class InMemoryJobQueue:
     def __init__(self) -> None:

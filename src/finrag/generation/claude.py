@@ -2,6 +2,7 @@
 
 import json
 import logging
+import threading
 from collections.abc import Sequence
 
 import anthropic
@@ -47,10 +48,12 @@ class ClaudeAnswerGenerator:
         self._model = model
         self._max_tokens = max_tokens
         self._usage = TokenUsage()
+        self._usage_lock = threading.Lock()  # one generator serves concurrent API requests
 
     def usage(self) -> TokenUsage:
         """Tokens the API has reported for this generator so far (read by the eval dry run)."""
-        return self._usage
+        with self._usage_lock:
+            return self._usage
 
     @classmethod
     def from_settings(cls, settings: Settings) -> "ClaudeAnswerGenerator":
@@ -81,7 +84,8 @@ class ClaudeAnswerGenerator:
                 raise TransientError("the answer model is unavailable") from exc
             raise  # a rejected request or bad credentials is a configuration fault
 
-        self._usage += TokenUsage(response.usage.input_tokens, response.usage.output_tokens)
+        with self._usage_lock:
+            self._usage += TokenUsage(response.usage.input_tokens, response.usage.output_tokens)
         if response.stop_reason in ("refusal", "max_tokens"):
             raise ModelOutputError(f"model stopped with {response.stop_reason}")
         text = "".join(block.text for block in response.content if block.type == "text")

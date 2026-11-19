@@ -15,8 +15,8 @@ from finrag.core.container import Container, build_queueless_container
 from finrag.core.domain import DocumentStatus, IngestionJob, Principal
 from finrag.evaluation.index import IndexBuildError
 from finrag.ingestion.pipeline import IngestionPipeline
-from finrag.ingestion.service import DocumentService
-from finrag.storage.models import Collection, DocumentVersion, Tenant
+from finrag.ingestion.service import DocumentService, DocumentView
+from finrag.storage.models import Chunk, Collection, Document, DocumentVersion, Tenant
 
 EVAL_TENANT_ID = UUID("00000000-0000-4000-8000-0000000000e1")
 EVAL_COLLECTION_ID = UUID("00000000-0000-4000-8000-0000000000e2")
@@ -77,7 +77,7 @@ class PipelineFilingIndexer:
     """Ingests PDF Filings into the eval Tenant and Collection via the real IngestionPipeline."""
 
     def __init__(self, container: Container, pipeline: IngestionPipeline) -> None:
-        self._container = container
+        self.container = container
         self._pipeline = pipeline
         self._queue = _CapturedJobs()
         self._documents = DocumentService(
@@ -86,12 +86,20 @@ class PipelineFilingIndexer:
         self._principal = eval_principal()
 
     def index(self, filename: str, pdf: bytes) -> bool:
-        view, created = self._documents.upload(self._principal, filename, "application/pdf", pdf)
-        if created:
+        """Ingest one Filing, keyed on its filename (the accession), not on the PDF bytes.
+
+        The renderer's output is not byte-stable, so a re-rendered Filing has a new content hash;
+        keying on the hash would ingest the same Filing twice. A Filing already in the eval
+        Tenant is never uploaded again; to ingest a re-rendered one, rebuild (`--rebuild`).
+        """
+        existing = self._find_by_filename(filename)
+        if existing is None:
+            view, _ = self._documents.upload(self._principal, filename, "application/pdf", pdf)
             jobs, self._queue.jobs = self._queue.jobs, []
-        elif view.status == DocumentStatus.READY:
+        elif existing.status == DocumentStatus.READY:
             return False
         else:  # a earlier run failed or was interrupted part-way: run it again
+            view = existing
             jobs = [self._job_for(view.id)]
         for job in jobs:
             self._pipeline.run(job)
@@ -101,20 +109,48 @@ class PipelineFilingIndexer:
             raise IndexBuildError(f"{filename} did not become searchable: {reason}")
         return True
 
+    def _find_by_filename(self, filename: str) -> DocumentView | None:
+        matches = [
+            d for d in self._documents.list_documents(self._principal) if d.filename == filename
+        ]
+        return matches[0] if matches else None
+
     def _job_for(self, document_id: UUID) -> IngestionJob:
-        with self._container.session_factory() as session:
+        with self.container.session_factory() as session:
             version = (
                 session.query(DocumentVersion)
-                .filter(DocumentVersion.document_id == document_id)
+                .filter(
+                    DocumentVersion.document_id == document_id,
+                    DocumentVersion.tenant_id == self._principal.tenant_id,
+                )
                 .order_by(DocumentVersion.created_at.desc())
                 .first()
             )
-            assert version is not None  # upload creates the version with the document
+            if version is None:  # absent, or not this Tenant's: the same answer
+                raise LookupError("no such Document in the eval Tenant")
             return IngestionJob(
                 tenant_id=self._principal.tenant_id,
                 document_id=document_id,
                 document_version_id=version.id,
             )
+
+
+def wipe_eval_index(container: Container) -> None:
+    """Delete the eval Tenant's Documents, Chunks, vector points and blobs, and nothing else.
+
+    Guarded by `require_eval_settings`, and every delete carries the eval Tenant id.
+    """
+    require_eval_settings(container.settings)
+    with container.session_factory() as session:
+        versions = session.query(DocumentVersion).filter(
+            DocumentVersion.tenant_id == EVAL_TENANT_ID
+        )
+        for version in versions:
+            container.vector_store.delete_version(EVAL_TENANT_ID, version.id)
+            container.blob_store.delete(version.blob_key)
+        for model in (Chunk, DocumentVersion, Document):
+            session.query(model).filter(model.tenant_id == EVAL_TENANT_ID).delete()
+        session.commit()
 
 
 def open_pipeline_indexer(settings: Settings) -> PipelineFilingIndexer:

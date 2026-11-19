@@ -73,9 +73,10 @@ eval-render: eval-image ## render cached filings to PDF in the eval image, offli
 	docker run --rm --network none --user $$(id -u):$$(id -g) -v "$(CURDIR)/evals:/evals" finrag-eval:dev \
 	  python -m finrag.evaluation.render --manifest /evals/manifest.json --cache-dir /evals/cache
 
-eval-index: check-docker-memory eval-image ## ingest the rendered filings into the eval tenant (needs `make up`, `make eval-render`; real filings need FINRAG_VOYAGE_API_KEY)
+eval-index: check-docker-memory eval-image ## ingest the rendered filings into the eval tenant; REBUILD=1 first wipes only the eval namespace (needs `make up`, `make eval-render`; real filings need FINRAG_VOYAGE_API_KEY)
 	mkdir -p evals/results
-	docker compose --profile eval run --rm --no-deps eval-index
+	docker compose --profile eval run --rm --no-deps eval-index python -m finrag.evaluation.index \
+	  --manifest /evals/manifest.json --cache-dir /evals/cache $(if $(REBUILD),--rebuild)
 
 eval-retrieval: eval-image ## retrieval-only metrics over the real eval index (needs `make up`, `make eval-index`; embeddings only, no paid answer calls)
 	mkdir -p evals/results
@@ -84,7 +85,8 @@ eval-retrieval: eval-image ## retrieval-only metrics over the real eval index (n
 	docker compose --profile eval run --rm --no-deps eval-retrieval
 
 eval-dry-run: eval-image ## PAID: answer+judge up to 5 questions, print measured tokens and cost (ARGS="--limit 8 --cost-cap-usd 2"; more than 5 needs a cap)
-	docker compose --profile eval run --rm --no-deps eval-dry-run python -m finrag.evaluation.dry_run --golden-dir /evals/golden $(ARGS)
+	docker compose --profile eval run --rm --no-deps eval-dry-run python -m finrag.evaluation.dry_run --golden-dir /evals/golden \
+	  --manifest /evals/manifest.json --cache-dir /evals/cache --results-dir /evals/results $(ARGS)
 
 eval: eval-image ## PAID: full run (retrieval, answers, judge); a cost cap is mandatory: make eval COST_CAP_USD=20
 	@test -n "$(COST_CAP_USD)" || { echo "make eval refused: set a per-run cost cap, e.g. make eval COST_CAP_USD=20 (no default)" >&2; exit 1; }

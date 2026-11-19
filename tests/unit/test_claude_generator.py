@@ -142,3 +142,25 @@ def test_a_reply_that_is_rejected_after_the_call_is_still_counted() -> None:
         claude.generate("How much cash?", (CHUNK,))
 
     assert claude.usage() == TokenUsage(500, 50)  # the tokens were billed either way
+
+
+def test_concurrent_requests_do_not_lose_token_counts() -> None:
+    import sys
+    import threading
+
+    sys.setswitchinterval(1e-6)  # make a lost update likely if the counter is unguarded
+    client = FakeClient(reply(GOOD, tokens=(10, 1)))
+    shared = generator(client)
+    threads, per_thread = 8, 300
+
+    def work() -> None:
+        for _ in range(per_thread):
+            shared.generate("How much cash?", (CHUNK,))
+
+    pool = [threading.Thread(target=work) for _ in range(threads)]
+    for t in pool:
+        t.start()
+    for t in pool:
+        t.join()
+
+    assert shared.usage() == TokenUsage(10 * threads * per_thread, 1 * threads * per_thread)

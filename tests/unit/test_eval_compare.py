@@ -211,3 +211,43 @@ def test_bless_refuses_a_file_that_is_not_a_results_file(tmp_path: Path) -> None
 
     with pytest.raises(BlessRefusedError, match="results file"):
         bless(source, tmp_path / "baseline.json")
+
+
+def with_depths(data: dict[str, object], search_k: int | None, evidence_k: int | None) -> dict:  # type: ignore[type-arg]
+    report = {**data["report"], "search_k": search_k, "evidence_k": evidence_k}  # type: ignore[dict-item]
+    return {**data, "report": report}
+
+
+def test_compare_warns_when_the_two_files_used_different_search_or_evidence_depth() -> None:
+    base = with_depths(results(), 100, 8)
+
+    assert "different depths" not in compare_report(base, with_depths(results(), 100, 8))
+    assert "search_k 100 vs 80" in compare_report(base, with_depths(results(), 80, 8))
+    assert "evidence depth 8 vs 5" in compare_report(base, with_depths(results(), 100, 5))
+    # a file that does not record its depth cannot be confirmed comparable
+    assert "different depths" in compare_report(base, results())
+
+
+def test_compare_warns_about_an_incomplete_or_partly_failed_run() -> None:
+    incomplete = {**results(), "incomplete": {"reason": "CostCapExceededError"}}
+    errored = results()
+    errored["report"] = {**errored["report"], "errors": [{"id": "q1"}]}  # type: ignore[dict-item]
+
+    assert "current run is incomplete: CostCapExceededError" in compare_report(
+        results(), incomplete
+    )
+    assert "1 question(s) failed in the current run" in compare_report(results(), errored)
+
+
+def test_bless_refuses_an_incomplete_run_and_a_run_with_failed_questions(tmp_path: Path) -> None:
+    incomplete = tmp_path / "full-1-a-incomplete.json"
+    incomplete.write_text(json.dumps({**results(), "incomplete": {"reason": "KeyboardInterrupt"}}))
+    errored_data = results()
+    errored_data["report"] = {**errored_data["report"], "errors": [{"id": "q1"}]}  # type: ignore[dict-item]
+    errored = tmp_path / "full-2-a.json"
+    errored.write_text(json.dumps(errored_data))
+
+    with pytest.raises(BlessRefusedError, match="incomplete"):
+        bless(incomplete, tmp_path / "baseline.json")
+    with pytest.raises(BlessRefusedError, match="failed"):
+        bless(errored, tmp_path / "baseline.json")

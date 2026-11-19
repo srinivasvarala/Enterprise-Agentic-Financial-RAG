@@ -103,34 +103,57 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser.add_argument("--manifest", type=Path, default=MANIFEST_PATH)
     parser.add_argument("--cache-dir", type=Path, default=CACHE_DIR)
     parser.add_argument("--results-dir", type=Path, default=RESULTS_DIR)
+    parser.add_argument(
+        "--rebuild",
+        action="store_true",
+        help="first delete the eval index (eval Tenant's Documents, points and blobs only)",
+    )
     args = parser.parse_args(argv)
 
     from finrag.core.config import Settings
-    from finrag.evaluation.environment import EvalEnvironmentError, open_pipeline_indexer
+    from finrag.evaluation.environment import (
+        EvalEnvironmentError,
+        open_pipeline_indexer,
+        wipe_eval_index,
+    )
+    from finrag.evaluation.fingerprint import (
+        IndexLocations,
+        InvalidIndexError,
+        QdrantPointCounter,
+        SqlDocumentCounter,
+        record_index,
+    )
 
+    settings = Settings()
+    counter = QdrantPointCounter(
+        settings.qdrant_url, settings.qdrant_collection, settings.qdrant_timeout_seconds
+    )
     try:
-        indexer = open_pipeline_indexer(Settings())
+        indexer = open_pipeline_indexer(settings)
+        if args.rebuild:
+            wipe_eval_index(indexer.container)
+            left = counter.count_points()
+            if left:
+                raise IndexBuildError(
+                    f"{left} points remain in the eval vector collection after the wipe; "
+                    "delete the eval collection by hand and run again."
+                )
+            print("eval index wiped (eval Tenant, collection and bucket only)", flush=True)
         reports = build_index(
             load_manifest(args.manifest),
             args.cache_dir,
             indexer,
             on_filing=lambda r: print(describe(r), flush=True),
         )
-    except (EvalEnvironmentError, MissingPdfError, IndexBuildError) as exc:
+        where = IndexLocations(
+            manifest=args.manifest,
+            render_record=args.cache_dir / RENDER_RECORD_NAME,
+            index_record=args.results_dir / "index.json",
+        )
+        record_index(where, settings, counter, SqlDocumentCounter.from_settings(settings))
+    except (EvalEnvironmentError, MissingPdfError, IndexBuildError, InvalidIndexError) as exc:
         print(f"eval-index refused: {exc}", file=sys.stderr)
         return 1
-    from finrag.evaluation.fingerprint import IndexLocations, QdrantPointCounter, record_index
-
-    settings = Settings()
-    counter = QdrantPointCounter(
-        settings.qdrant_url, settings.qdrant_collection, settings.qdrant_timeout_seconds
-    )
-    where = IndexLocations(
-        manifest=args.manifest,
-        render_record=args.cache_dir / RENDER_RECORD_NAME,
-        index_record=args.results_dir / "index.json",
-    )
-    record_index(where, settings, counter)
     added = sum(r.ingested for r in reports)
     print(f"{added} of {len(reports)} Filings newly ingested into the eval index")
     return 0

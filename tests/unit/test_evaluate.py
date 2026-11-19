@@ -15,7 +15,7 @@ from finrag.core.domain import ChunkKind, DraftAnswer, EvidenceChunk, Principal,
 from finrag.core.errors import ModelOutputError
 from finrag.core.interfaces import AnswerGenerator
 from finrag.evaluation.evaluate import EvaluationPipeline, evaluate
-from finrag.evaluation.golden import GoldenSet, Question, TextSpan
+from finrag.evaluation.golden import GoldenSet, Question, TextSpan, is_citation_hit
 from finrag.generation.extractive import ExtractiveGenerator
 from finrag.indexing.in_memory import HashEmbedder, HashSparseEncoder, InMemoryVectorStore
 from finrag.retrieval.retriever import Retriever
@@ -274,3 +274,23 @@ def test_an_unanswerable_question_refused_as_unverifiable_is_not_a_correct_refus
 
     assert overall.correct_refusal_rate == 0.0
     assert overall.unverifiable_rate == 1.0
+
+
+def test_a_citation_hit_is_a_quote_containing_the_gold_span_or_most_of_it() -> None:
+    gold = span("Net sales were 100 billion dollars in 2024")
+
+    assert is_citation_hit(gold, "Net sales were 100 billion dollars in 2024, up 2%.")  # contains
+    assert is_citation_hit(gold, "Net sales were 100 billion dollars")  # a verbatim half or more
+    assert not is_citation_hit(gold, "Net sales")  # trivially short
+    assert not is_citation_hit(gold, "Net sales were 100 billion dollars in 2023")  # not verbatim
+    assert not is_citation_hit(gold, "")
+
+
+def test_a_citation_quoting_most_of_a_longer_gold_span_is_a_citation_hit() -> None:
+    world = World()
+    world.index("Net sales were 100 billion dollars. Margins were thin and falling.", score=0.9)
+    gold = span("Net sales were 100 billion dollars. Margins were thin")  # quote: first sentence
+
+    overall = evaluate(GoldenSet((question("q1", gold),)), world.pipeline, PRINCIPAL).overall
+
+    assert overall.citation_hit_rate == 1.0

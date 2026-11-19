@@ -20,8 +20,8 @@ from pathlib import Path
 
 from finrag.core.config import Settings
 from finrag.core.domain import Principal, TokenUsage
-from finrag.evaluation.evaluate import EvalPipeline, evaluate
-from finrag.evaluation.golden import GoldenSet, Question, load_golden_set
+from finrag.evaluation.evaluate import EvalPipeline, evaluate, search_depth
+from finrag.evaluation.golden import GoldenSet, Question
 from finrag.evaluation.judge import Judge, UsageSource
 
 MAX_UNCAPPED_QUESTIONS = 5
@@ -32,15 +32,18 @@ class DryRunRefusedError(Exception):
     """The run was not started; the message says what to change."""
 
 
+MIN_COSTED_FOR_PROJECTION = 2  # questions that incurred cost before spend is projected
+
+
 class CostCapExceededError(Exception):
-    """Projected spend passed the cap, so the run stopped early."""
+    """Actual or projected spend passed the cap, so the run stopped early."""
 
     def __init__(
         self, *, questions_run: int, spent_usd: float, projected_usd: float, cap_usd: float
     ) -> None:
         super().__init__(
-            f"stopped after {questions_run} question(s): ${spent_usd:.4f} spent, projected "
-            f"${projected_usd:.4f} for the run, over the ${cap_usd:.2f} cost cap"
+            f"stopped after {questions_run} question(s): ${spent_usd:.4f} spent, "
+            f"${projected_usd:.4f} projected for the run, over the ${cap_usd:.2f} cost cap"
         )
         self.questions_run = questions_run
         self.spent_usd = spent_usd
@@ -74,6 +77,8 @@ class DryRunReport:
     judge_cost_usd: float
     total_cost_usd: float
     projected_full_run_usd: float  # mean cost per question run, times the whole Golden Set
+    judge_failures: int = 0  # questions the judge failed on: their judge cost is not measured
+    question_errors: int = 0  # questions the pipeline failed on
 
     def render(self) -> str:
         def line(role: str, model: str, usage: TokenUsage, cost: float) -> str:
@@ -89,6 +94,12 @@ class DryRunReport:
                     "generator", self.generator_model, self.generator_usage, self.generator_cost_usd
                 ),
                 line("judge", self.judge_model, self.judge_usage, self.judge_cost_usd),
+                f"  judge failures {self.judge_failures}, question errors {self.question_errors}"
+                + (
+                    "  (the cost below is understated: check the judge key and model)"
+                    if self.judge_failures or self.question_errors
+                    else ""
+                ),
                 f"  measured total ${self.total_cost_usd:.4f}",
                 f"  projected for all {self.golden_questions} questions "
                 f"${self.projected_full_run_usd:.2f} (indicative: judge calls vary per answer)",
@@ -96,14 +107,22 @@ class DryRunReport:
         )
 
 
-def _sample(golden: GoldenSet, limit: int) -> GoldenSet:
-    """The first `limit` questions, round-robin across categories, so cost is representative."""
+def round_robin(golden: GoldenSet) -> GoldenSet:
+    """Every question, taking one per category in turn, so any prefix is representative.
+
+    The dry run and the full run both use this order, so a cost cap that projects from the
+    questions run so far is not fooled by a run of cheap refusals (the unanswerable category).
+    """
     by_category: dict[str, list[Question]] = defaultdict(list)
     for q in golden.questions:
         by_category[q.category].append(q)
     rounds = zip_longest(*(by_category[c] for c in sorted(by_category)))
-    picked = [q for batch in rounds for q in batch if q is not None]
-    return GoldenSet(tuple(picked[:limit]))
+    return GoldenSet(tuple(q for batch in rounds for q in batch if q is not None))
+
+
+def _sample(golden: GoldenSet, limit: int) -> GoldenSet:
+    """The first `limit` questions of the round-robin order."""
+    return GoldenSet(round_robin(golden).questions[:limit])
 
 
 def _delta(source: UsageSource, before: TokenUsage) -> TokenUsage:
@@ -117,8 +136,9 @@ class SpendTracker:
     """Measured spend of a run so far, and the cap rule shared by the dry run and `make eval`.
 
     Cost is the tokens the two models reported times the `Settings` prices. After each question
-    the whole-run projection (mean cost per question so far, times the questions planned) is
-    compared with the cap, so a run stops before it has spent much past what it was allowed.
+    the run stops when actual spend is over the cap, or, once `MIN_COSTED_FOR_PROJECTION`
+    questions have incurred cost (answered or judged; a refusal is free), when spend so far plus
+    the mean cost of a costed question for each question still to run would pass the cap.
     """
 
     def __init__(
@@ -140,6 +160,8 @@ class SpendTracker:
         self._generator_before, self._judge_before = generator_usage.usage(), judge_usage.usage()
         self._planned = planned
         self._cap = cost_cap_usd
+        self._costed = 0
+        self._last_spent = 0.0
 
     def generated(self) -> TokenUsage:
         return _delta(self._generator_usage, self._generator_before)
@@ -153,10 +175,19 @@ class SpendTracker:
         )
 
     def check_cap(self, done: int) -> None:
+        so_far = self.spent_usd()
+        if so_far > self._last_spent:
+            self._costed += 1
+            self._last_spent = so_far
         if self._cap is None:
             return
-        so_far = self.spent_usd()
-        projected = so_far / done * self._planned
+        if so_far > self._cap:
+            raise CostCapExceededError(
+                questions_run=done, spent_usd=so_far, projected_usd=so_far, cap_usd=self._cap
+            )
+        if self._costed < MIN_COSTED_FOR_PROJECTION:
+            return
+        projected = so_far + so_far / self._costed * (self._planned - done)
         if projected > self._cap:
             raise CostCapExceededError(
                 questions_run=done, spent_usd=so_far, projected_usd=projected, cap_usd=self._cap
@@ -174,6 +205,7 @@ def run_dry_run(
     settings: Settings,
     limit: int = MAX_UNCAPPED_QUESTIONS,
     cost_cap_usd: float | None = None,
+    max_judge_failure_rate: float = 1.0,
 ) -> DryRunReport:
     """Answer and judge `limit` questions, measure what they cost, and stop at the cost cap."""
     if cost_cap_usd is not None and cost_cap_usd <= 0:
@@ -195,7 +227,17 @@ def run_dry_run(
         cost_cap_usd=cost_cap_usd,
     )
 
-    evaluate(sample, pipeline, principal, judge=judge, after_question=spend.check_cap)
+    report = evaluate(
+        sample,
+        pipeline,
+        principal,
+        judge=judge,
+        after_question=spend.check_cap,
+        max_judge_failure_rate=max_judge_failure_rate,
+        max_question_error_rate=max_judge_failure_rate,
+        search_k=search_depth(settings),
+        evidence_k=settings.rerank_top_n,
+    )
 
     generated, judged = spend.generated(), spend.judged()
     generator_price, judge_price = spend.generator_price, spend.judge_price
@@ -211,6 +253,8 @@ def run_dry_run(
         judge_cost_usd=judge_price.cost_usd(judged),
         total_cost_usd=total,
         projected_full_run_usd=total / planned * len(golden.questions),
+        judge_failures=report.judged.not_judged if report.judged is not None else 0,
+        question_errors=len(report.errors),
     )
 
 
@@ -218,35 +262,72 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Measure the cost of a few judged questions.")
     parser.add_argument("--limit", type=int, default=MAX_UNCAPPED_QUESTIONS)
     parser.add_argument("--cost-cap-usd", type=float, default=None)
+    parser.add_argument("--max-judge-failure-rate", type=float, default=None)
     parser.add_argument("--golden-dir", type=Path, default=GOLDEN_DIR)
+    parser.add_argument("--manifest", type=Path, default=None)
+    parser.add_argument("--cache-dir", type=Path, default=None)
+    parser.add_argument("--results-dir", type=Path, default=None)
     args = parser.parse_args(argv)
 
     # Wired here, not at import: the judge needs the `evals` group and the pipeline needs the
     # eval stack, neither of which the unit tests have.
-    from finrag.core.config import get_settings
     from finrag.core.container import build_queueless_container
-    from finrag.evaluation.deepeval_judge import DeepEvalJudge
-    from finrag.evaluation.environment import eval_principal, require_eval_settings
-    from finrag.evaluation.evaluate import EvaluationPipeline
+    from finrag.evaluation.environment import (
+        EvalEnvironmentError,
+        eval_principal,
+        require_eval_settings,
+    )
+    from finrag.evaluation.evaluate import (
+        EvaluationPipeline,
+        JudgeFailureRateExceededError,
+        QuestionFailureRateExceededError,
+    )
+    from finrag.evaluation.fetch import CACHE_DIR, MANIFEST_PATH
+    from finrag.evaluation.fingerprint import (
+        IndexLocations,
+        QdrantPointCounter,
+        SqlDocumentCounter,
+        StaleIndexError,
+        require_fresh_index,
+    )
+    from finrag.evaluation.golden import GoldenSetError
+    from finrag.evaluation.index import RESULTS_DIR
+    from finrag.evaluation.render import RENDER_RECORD_NAME
+    from finrag.evaluation.retrieval import NoGoldenSetError, load_golden_dir
     from finrag.generation.claude import ClaudeAnswerGenerator
 
-    settings = get_settings()
-    require_eval_settings(settings)
-    files = sorted(args.golden_dir.glob("*.jsonl"))
-    if not files:
-        print(f"dry run refused: no Golden Set files in {args.golden_dir}.", file=sys.stderr)
-        return 1
-    golden = load_golden_set("\n".join(f.read_text() for f in files))
-    container = build_queueless_container(settings)
-    generator = container.generator
-    if not isinstance(generator, ClaudeAnswerGenerator):
-        print(
-            "dry run refused: set FINRAG_GENERATOR_BACKEND=claude to measure the real generator.",
-            file=sys.stderr,
-        )
-        return 1
-    judge = DeepEvalJudge(settings)
+    settings = Settings()
+    rate = (
+        args.max_judge_failure_rate
+        if args.max_judge_failure_rate is not None
+        else settings.eval_max_judge_failure_rate
+    )
+    cache_dir = args.cache_dir or CACHE_DIR
+    results_dir = args.results_dir or RESULTS_DIR
     try:
+        require_eval_settings(settings)
+        golden = load_golden_dir(args.golden_dir)
+        require_fresh_index(
+            IndexLocations(
+                manifest=args.manifest or MANIFEST_PATH,
+                render_record=cache_dir / RENDER_RECORD_NAME,
+                index_record=results_dir / "index.json",
+            ),
+            settings,
+            QdrantPointCounter(
+                settings.qdrant_url, settings.qdrant_collection, settings.qdrant_timeout_seconds
+            ),
+            SqlDocumentCounter.from_settings(settings),
+        )
+        container = build_queueless_container(settings)
+        generator = container.generator
+        if not isinstance(generator, ClaudeAnswerGenerator):
+            raise DryRunRefusedError(
+                "set FINRAG_GENERATOR_BACKEND=claude to measure the real generator."
+            )
+        from finrag.evaluation.deepeval_judge import DeepEvalJudge
+
+        judge = DeepEvalJudge(settings)
         report = run_dry_run(
             golden,
             EvaluationPipeline(container.retriever(), generator),
@@ -257,8 +338,18 @@ def main(argv: list[str] | None = None) -> int:
             settings=settings,
             limit=args.limit,
             cost_cap_usd=args.cost_cap_usd,
+            max_judge_failure_rate=rate,
         )
-    except (DryRunRefusedError, CostCapExceededError) as exc:
+    except (
+        DryRunRefusedError,
+        CostCapExceededError,
+        JudgeFailureRateExceededError,
+        QuestionFailureRateExceededError,
+        EvalEnvironmentError,
+        NoGoldenSetError,
+        GoldenSetError,
+        StaleIndexError,
+    ) as exc:
         print(f"dry run refused: {exc}", file=sys.stderr)
         return 1
     print(report.render())

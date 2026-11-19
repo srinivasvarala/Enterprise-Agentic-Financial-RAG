@@ -11,10 +11,16 @@ from pathlib import Path
 import pytest
 from test_dry_run import Meter, MeteredGenerator
 from test_evaluate import PRINCIPAL, World
+from test_evaluate_judged import FlakyPipeline
 
 from finrag.core.config import Settings
+from finrag.core.errors import TransientError
+from finrag.evaluation.bless import BlessRefusedError, bless
 from finrag.evaluation.dry_run import CostCapExceededError
-from finrag.evaluation.evaluate import JudgeFailureRateExceededError
+from finrag.evaluation.evaluate import (
+    JudgeFailureRateExceededError,
+    QuestionFailureRateExceededError,
+)
 from finrag.evaluation.fingerprint import IndexLocations, StaleIndexError, record_index
 from finrag.evaluation.full_run import (
     EvalRefusedError,
@@ -50,9 +56,11 @@ class ScriptedJudge:
         self.meter = meter
         self.broken: set[str] = set()
         self.calls = 0
+        self.asked: list[str] = []
 
     def judge(self, case: JudgeCase) -> JudgeScores:
         self.calls += 1
+        self.asked.append(case.question)
         self.meter.charge()
         if case.question in self.broken:
             raise RuntimeError("provider said: key sk-ant-LEAKED is invalid")
@@ -84,14 +92,17 @@ class Rig:
         return self.points
 
     def run(self, **kwargs: object) -> FullRun:
-        args: dict[str, object] = {"cost_cap_usd": 1.0, "max_judge_failure_rate": 0.5}
+        args: dict[str, object] = {
+            "cost_cap_usd": 1.0,
+            "max_judge_failure_rate": 0.5,
+            "pipeline": self.world.pipeline,
+        }
         args.update(kwargs)
         return run_full_eval(
             golden_dir=self.golden_dir,
             where=self.where,
             settings=self.settings,
             counter=self,
-            pipeline=self.world.pipeline,
             principal=PRINCIPAL,
             judge=self.judge,
             generator_usage=self.generator_meter,
@@ -136,11 +147,22 @@ def test_a_stale_index_is_refused_before_any_paid_call(rig: Rig) -> None:
 
 def test_a_run_over_the_cap_stops_early_and_writes_no_results(rig: Rig) -> None:
     with pytest.raises(CostCapExceededError) as stopped:
-        rig.run(cost_cap_usd=0.05)  # one question costs $0.034; three project to $0.102
+        rig.run(cost_cap_usd=0.05)  # one question costs $0.034: over the cap after the second
 
-    assert stopped.value.questions_run == 1
-    assert rig.judge.calls == 1
-    assert not list(rig.results_dir.glob("full-*.json"))
+    assert stopped.value.questions_run == 2
+    assert rig.judge.calls == 2
+    (partial_path,) = rig.results_dir.glob("full-*.json")
+    assert partial_path.name.endswith("-incomplete.json")
+    partial = json.loads(partial_path.read_text())
+    assert partial["incomplete"] == {
+        "reason": "CostCapExceededError",
+        "questions_completed": 2,
+        "questions_total": 3,
+    }
+    assert partial["cost"]["total_usd"] == pytest.approx(0.068)  # what was spent so far
+    assert partial["cost"]["judge_tokens"] == {"input": 10000, "output": 1000}
+    assert partial["report"]["overall"]["questions"] == 2
+    assert str(partial_path) in "".join(stopped.value.__notes__)
 
 
 def test_a_run_within_the_cap_writes_the_results_with_the_judged_section(rig: Rig) -> None:
@@ -188,10 +210,17 @@ def test_a_judge_failure_on_one_question_is_reported_and_the_run_continues(rig: 
 def test_too_many_judge_failures_stop_the_run(rig: Rig) -> None:
     rig.judge.broken = {"question q0?", "question q1?", "question q2?"}
 
-    with pytest.raises(JudgeFailureRateExceededError, match="judge failed on 2 of 3"):
+    with pytest.raises(JudgeFailureRateExceededError, match="judge failed on 2 of 3") as stopped:
         rig.run(max_judge_failure_rate=0.5)
 
-    assert not list(rig.results_dir.glob("full-*.json"))
+    (partial_path,) = rig.results_dir.glob("full-*-incomplete.json")
+    partial = json.loads(partial_path.read_text())
+    assert partial["incomplete"]["reason"] == "JudgeFailureRateExceededError"
+    assert partial["incomplete"]["questions_completed"] == 2
+    assert partial["report"]["judged"]["not_judged"] == 2
+    assert "LEAKED" not in partial_path.read_text()
+    assert partial["cost"]["total_usd"] > 0
+    assert str(partial_path) in "".join(stopped.value.__notes__)
 
 
 def test_the_summary_has_the_metrics_the_cost_and_the_fallback_caveat(rig: Rig) -> None:
@@ -201,3 +230,69 @@ def test_the_summary_has_the_metrics_the_cost_and_the_fallback_caveat(rig: Rig) 
     assert "overall" in summary and "text" in summary
     assert "$0.1020" in summary and "cap $1.00" in summary
     assert "fallback" in summary and "approximate" in summary
+
+
+def test_a_provider_error_on_one_question_is_an_error_outcome_not_a_crash(rig: Rig) -> None:
+    flaky = FlakyPipeline(
+        rig.world.pipeline, {"question q1?": TransientError("503 from https://api.example/secret")}
+    )
+
+    run = rig.run(pipeline=flaky)
+
+    assert flaky.asked == 3
+    text = run.path.read_text()
+    data = json.loads(text)
+    assert data["report"]["errors"] == [{"id": "q1", "category": "text", "error": "TransientError"}]
+    assert data["report"]["overall"]["questions"] == 2  # left out of the metrics
+    assert "api.example" not in text and "secret" not in text
+    assert "1 question(s) failed" in format_full_summary(run)
+    assert "incomplete" not in data
+
+
+def test_an_interrupted_run_writes_a_partial_file_and_re_raises(rig: Rig) -> None:
+    flaky = FlakyPipeline(rig.world.pipeline, {"question q1?": KeyboardInterrupt()})
+
+    with pytest.raises(KeyboardInterrupt):
+        rig.run(pipeline=flaky)
+
+    (partial_path,) = rig.results_dir.glob("full-*-incomplete.json")
+    partial = json.loads(partial_path.read_text())
+    assert partial["incomplete"]["reason"] == "KeyboardInterrupt"
+    assert partial["incomplete"]["questions_completed"] == 1
+    assert partial["incomplete"]["questions_total"] == 3
+
+
+def test_the_full_run_asks_in_the_round_robin_order_of_the_dry_run(rig: Rig) -> None:
+    rows = [json.loads(line) for line in golden_text(3).splitlines()]
+    rows[0]["category"], rows[1]["category"], rows[2]["category"] = "text", "text", "table"
+    (rig.golden_dir / "set.jsonl").write_text("\n".join(json.dumps(r) for r in rows))
+
+    rig.run()
+
+    assert rig.judge.asked == ["question q2?", "question q0?", "question q1?"]
+
+
+def test_the_results_record_the_depths_the_recalls_were_measured_at(rig: Rig) -> None:
+    data = json.loads(rig.run().path.read_text())
+
+    assert (
+        data["report"]["search_k"] == rig.settings.retrieve_dense_k + rig.settings.retrieve_sparse_k
+    )
+    assert data["report"]["evidence_k"] == rig.settings.rerank_top_n
+
+
+def test_a_run_where_every_question_errors_stops_with_an_incomplete_file(rig: Rig) -> None:
+    down = TransientError("503 from https://api.example/secret")
+    flaky = FlakyPipeline(rig.world.pipeline, {f"question q{n}?": down for n in range(3)})
+
+    with pytest.raises(QuestionFailureRateExceededError, match="questions failed"):
+        rig.run(pipeline=flaky, max_judge_failure_rate=0.2)
+
+    (partial_path,) = rig.results_dir.glob("full-*.json")
+    assert partial_path.name.endswith("-incomplete.json")
+    partial = json.loads(partial_path.read_text())
+    assert partial["incomplete"]["reason"] == "QuestionFailureRateExceededError"
+    assert partial["report"]["errors"][0]["error"] == "TransientError"
+    assert "api.example" not in partial_path.read_text()
+    with pytest.raises(BlessRefusedError, match="incomplete"):
+        bless(partial_path, rig.results_dir / "baseline.json")

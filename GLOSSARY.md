@@ -96,7 +96,7 @@ The curated questions, each with a known answer and the Gold Spans that support 
 _Avoid_: Test set, benchmark, ground truth
 
 **Gold Span**:
-The exact text, on a stated page of a document, that supports a Golden Set question's answer. Stated as document, page range and quoted text, never as a chunk, so it survives changes to chunking.
+The exact text, on a stated page of a document, that supports a Golden Set question's answer. Stated as document, page range and quoted text, never as a chunk, so it survives changes to chunking. For a table answer it is a row label and a figure that must appear on the same row.
 _Avoid_: Gold chunk, label, annotation
 
 **Hit**:

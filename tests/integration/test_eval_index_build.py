@@ -22,6 +22,7 @@ from finrag.evaluation.environment import (
     seed_eval_tenant,
 )
 from finrag.evaluation.fetch import ManifestEntry
+from finrag.evaluation.fingerprint import SqlDocumentCounter
 from finrag.evaluation.index import build_index
 
 pytestmark = pytest.mark.integration
@@ -73,6 +74,12 @@ def test_index_build_ingests_the_fixture_once_and_keeps_it_from_the_default_tena
     assert [r.ingested for r in first] == [True]
     assert first[0].peak_mb > 0
     assert [r.ingested for r in second] == [False]  # a second run adds nothing
+
+    # a re-render is a new byte sequence for the same Filing: still one Document
+    (cache_dir / f"{ACCESSION}.pdf").write_bytes(FIXTURE.read_bytes() + b"\n% re-rendered\n")
+    third = build_index(entries, cache_dir, indexer)
+    assert [r.ingested for r in third] == [False]
+    assert SqlDocumentCounter(eval_container.session_factory, EVAL_TENANT_ID).count_documents() == 1
 
     service = eval_container.document_service()
     (document,) = service.list_documents(eval_principal())
