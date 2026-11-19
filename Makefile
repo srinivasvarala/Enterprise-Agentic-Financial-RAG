@@ -1,5 +1,5 @@
 .DEFAULT_GOAL := help
-.PHONY: help install build up down logs migrate reconcile dev lint fmt test test-int ci eval check-image
+.PHONY: help install build up down logs migrate reconcile dev lint fmt test test-int ci eval eval-fetch check-image
 
 help: ## list targets
 	@grep -hE '^[a-z-]+:.*## ' $(MAKEFILE_LIST) | awk -F':.*## ' '{printf "  %-10s %s\n", $$1, $$2}'
@@ -56,6 +56,9 @@ ci: ## wait for GitHub CI on the pushed HEAD; non-zero if any job fails (Linux r
 	done; \
 	[ -n "$$id" ] || { echo "No CI run for $$sha: push first"; exit 1; }; \
 	gh run watch $$id --interval 20 --exit-status
+
+eval-fetch: ## download the pinned 10-K filings into evals/cache/ and verify checksums (SEC EDGAR)
+	uv run python -m finrag.evals.fetch
 
 eval: ## eval suite (real models, costs money)
 	uv run pytest -m eval evals/
