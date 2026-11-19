@@ -4,7 +4,8 @@ Needs only embeddings (no answer or judge calls), so it is cheap to run often. I
 index is stale, writes an untracked results file under `evals/results/` and prints a summary table.
 
 Results file (`retrieval-<UTC timestamp>-<git sha>.json`):
-`run` (kind, started_at, git_sha, image_digest), `models` (embedder, sparse, reranker, answer),
+`run` (kind, started_at, git_sha, image_digest), `models` (embedder, sparse, reranker, answer,
+judge),
 `index` (the fingerprint recorded by the build) and `report` (`Report.to_dict()`).
 """
 
@@ -90,6 +91,7 @@ def run_retrieval_eval(
             "sparse": settings.fastembed_bm25_model,
             "reranker": settings.reranker_model,
             "answer": settings.answer_model,
+            "judge": settings.judge_model,
         },
         "index": json.loads(where.index_record.read_text()),
         "report": report.to_dict(),

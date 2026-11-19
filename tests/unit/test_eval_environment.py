@@ -100,10 +100,7 @@ def test_require_eval_settings_accepts_the_eval_profile_settings() -> None:
     )
 
 
-EVAL_SERVICES = ("eval-index", "eval-retrieval")
-
-
-@pytest.mark.parametrize("name", EVAL_SERVICES)
+@pytest.mark.parametrize("name", ["eval-index", "eval-retrieval"])
 def test_the_compose_eval_profile_matches_the_eval_environment_and_is_memory_capped(
     name: str,
 ) -> None:
@@ -119,5 +116,11 @@ def test_the_compose_eval_profile_matches_the_eval_environment_and_is_memory_cap
     assert env["FINRAG_QDRANT_COLLECTION"] == EVAL_QDRANT_COLLECTION
     assert env["FINRAG_S3_BUCKET"] == EVAL_S3_BUCKET
     # no other service is part of the profile: the dev stack is untouched by `--profile eval`
-    others = [n for n, s in compose["services"].items() if n not in EVAL_SERVICES]
+    eval_services = ("eval-index", "eval-dry-run", "eval-retrieval")
+    others = [n for n in compose["services"] if n not in eval_services]
     assert all("profiles" not in compose["services"][n] for n in others)
+    # the dry run reads and writes only the eval Tenant, Collection and collections too
+    dry_run = compose["services"]["eval-dry-run"]
+    assert dry_run["profiles"] == ["eval"]
+    assert dry_run["environment"]["FINRAG_DEFAULT_TENANT_ID"] == str(EVAL_TENANT_ID)
+    assert dry_run["environment"]["FINRAG_QDRANT_COLLECTION"] == EVAL_QDRANT_COLLECTION

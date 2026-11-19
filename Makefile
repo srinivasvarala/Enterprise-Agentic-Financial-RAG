@@ -1,5 +1,5 @@
 .DEFAULT_GOAL := help
-.PHONY: help install build up down logs migrate reconcile dev lint fmt test test-int ci eval eval-fetch eval-render eval-index eval-retrieval eval-image check-eval-image check-docker-memory check-image
+.PHONY: help install build up down logs migrate reconcile dev lint fmt test test-int ci eval eval-fetch eval-render eval-index eval-retrieval eval-dry-run eval-image check-eval-image check-docker-memory check-image
 
 help: ## list targets
 	@grep -hE '^[a-z-]+:.*## ' $(MAKEFILE_LIST) | awk -F':.*## ' '{printf "  %-10s %s\n", $$1, $$2}'
@@ -82,6 +82,9 @@ eval-retrieval: eval-image ## retrieval-only metrics over the real eval index (n
 	FINRAG_EVAL_IMAGE_DIGEST=$$(docker image inspect --format '{{.Id}}' finrag-eval:dev) \
 	FINRAG_EVAL_GIT_SHA=$$(git rev-parse --short HEAD) \
 	docker compose --profile eval run --rm --no-deps eval-retrieval
+
+eval-dry-run: eval-image ## PAID: answer+judge up to 5 questions, print measured tokens and cost (ARGS="--limit 8 --cost-cap-usd 2"; more than 5 needs a cap)
+	docker compose --profile eval run --rm --no-deps eval-dry-run python -m finrag.evaluation.dry_run --golden-dir /evals/golden $(ARGS)
 
 eval: ## eval suite (real models, costs money)
 	uv run pytest -m eval evals/

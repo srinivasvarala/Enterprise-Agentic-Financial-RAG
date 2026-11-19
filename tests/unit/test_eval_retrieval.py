@@ -114,6 +114,7 @@ def test_a_fresh_index_gives_a_results_file_named_by_time_and_sha(world: World) 
     assert data["models"]["sparse"] == world.settings.fastembed_bm25_model
     assert data["models"]["reranker"] == world.settings.reranker_model
     assert data["models"]["answer"] == world.settings.answer_model
+    assert data["models"]["judge"] == world.settings.judge_model
     assert data["index"] == json.loads(world.where.index_record.read_text())
     assert data["report"]["overall"]["recall_at_8"] == 1.0
     assert set(data["report"]["by_category"]) == {"text", "unanswerable"}
